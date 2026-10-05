@@ -25,7 +25,7 @@ Claim states in `v3/envelopes.jsonl`: 1,677 available · 485 not_available · 4 
 
 ## 200-company holdout (`holdout-200.jsonl`, seed 1005, no overlap with the smoke set)
 
-Same code as v3 except worker count (8) and discovery timeouts. 200/200 envelopes, validation passed, 1,791 requests, 8 m 39 s.
+Run with the v2 code: same discovery and site-enrichment logic as v3, but 8 workers, longer discovery timeouts, and before the latest-accounts and summary fixes. 200/200 envelopes, validation passed, 1,791 requests, 8 m 39 s.
 19 verified websites, of which 5 were found only by org-number proof; 19 company-owned social profiles; 3 companies with hiring signals; 6 companies with dated activity (31 items).
 Every org-number-proven publication was checked by hand against its proof span; all spans contain the company's own organisation number.
 
