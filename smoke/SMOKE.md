@@ -32,3 +32,7 @@ Every org-number-proven publication was checked by hand against its proof span; 
 ## What these numbers do not show
 
 The competition's recall score is relative to the pooled, checked findings of all entrants and Builderr's crawlers. A local run cannot measure it.
+
+## Code version note
+
+`v3/` was produced at commit `41ce9ec`. The following commit only lets `iter_bulk` read an uncompressed CSV snapshot as well as the gzip file BRREG serves; for the gzip snapshot used here the code path and output are unchanged.
