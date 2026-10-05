@@ -1,0 +1,48 @@
+{
+  "run_id": "holdout-v2-2026-10-05",
+  "started_at": "2026-10-05T09:31:07.771264Z",
+  "completed_at": "2026-10-05T09:39:45.707103Z",
+  "expected_count": 200,
+  "emitted_envelopes": 200,
+  "resumed_profiles": 0,
+  "profiles_fetched_this_run": 200,
+  "modules": [
+    "registry",
+    "accounting_obligation",
+    "registry_live",
+    "financials",
+    "roles",
+    "group",
+    "locations",
+    "website",
+    "hiring",
+    "public_activity"
+  ],
+  "registry": {
+    "registry_snapshot_sha256": "0b502cd50b8c99a408ea3cd2aa1bfc393c8affae8d0dd85889b97036c5884946",
+    "registry_rows_scanned": 1170545,
+    "requested": 200,
+    "selected": 200
+  },
+  "operations": {
+    "requests": 1791,
+    "bytes": 49275915,
+    "p50_ms": 1265,
+    "p95_ms": 2686
+  },
+  "validation": {
+    "passed": true,
+    "checks": {
+      "exact_expected_count": true,
+      "unique_organisation_numbers": true,
+      "all_entity_states_terminal": true,
+      "all_module_states_terminal": true,
+      "zero_silent_drops": true
+    },
+    "invalid_states": []
+  }
+}
+
+real	8m38.592s
+user	0m0.000s
+sys	0m0.000s

@@ -1,0 +1,51 @@
+{
+  "companies": 100,
+  "baseline": {
+    "registry_live": 100,
+    "financials": 100,
+    "roles": 100,
+    "locations": 100,
+    "website": 2,
+    "website_discovered": 0,
+    "social_profiles": 0,
+    "hiring_signal": 0,
+    "job_items": 0,
+    "activity_company": 0,
+    "activity_items": 0
+  },
+  "candidate": {
+    "registry_live": 100,
+    "financials": 100,
+    "roles": 100,
+    "locations": 100,
+    "website": 4,
+    "website_discovered": 2,
+    "social_profiles": 3,
+    "hiring_signal": 0,
+    "job_items": 0,
+    "activity_company": 2,
+    "activity_items": 24
+  },
+  "discovered_websites": [
+    {
+      "organisation_number": "935013623",
+      "name": "MINKRYPTO AS",
+      "url": "https://www.minkrypto.no/",
+      "proof": {
+        "url": "https://www.minkrypto.no/",
+        "content_sha256": "a4a6a166fea38fb36300f253fb00d18f19ab36d6ecb1f766aa4bf174456fa4be",
+        "claim_span": "r! Finner du ikke det du leter etter? © 2026 MinKrypto minKrypto minKrypto AS - 935 013 623 E-post: [email protected] ​ Sørkedalsve"
+      }
+    },
+    {
+      "organisation_number": "827340162",
+      "name": "NOVOOI AS",
+      "url": "https://novooi.com/",
+      "proof": {
+        "url": "https://novooi.com/",
+        "content_sha256": "d769f33b7ca8fa98487ce3b60ac6ad4883a15b6969d3de9f4caa0b06dfe9a46f",
+        "claim_span": "gstider: Tirsdag-Lørdag kl. 12-16 eller ved avtale. EST. 2021 OSLO © NOVOOI MVA 827 340 162 Informasjon Profesjonelle Bli leverandø"
+      }
+    }
+  ]
+}

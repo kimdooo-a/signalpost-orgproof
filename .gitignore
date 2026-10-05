@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+data-local/
+out/
+smoke/baseline/profiles.jsonl
+smoke/holdout-v2/profiles.jsonl
+smoke/v1/
+smoke/v2/
+.pytest_cache/

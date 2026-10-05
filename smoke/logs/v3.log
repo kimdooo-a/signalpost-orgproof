@@ -1,0 +1,48 @@
+{
+  "run_id": "smoke-v3-2026-10-05",
+  "started_at": "2026-10-05T09:40:01.376688Z",
+  "completed_at": "2026-10-05T09:42:36.385907Z",
+  "expected_count": 100,
+  "emitted_envelopes": 100,
+  "resumed_profiles": 0,
+  "profiles_fetched_this_run": 100,
+  "modules": [
+    "registry",
+    "accounting_obligation",
+    "registry_live",
+    "financials",
+    "roles",
+    "group",
+    "locations",
+    "website",
+    "hiring",
+    "public_activity"
+  ],
+  "registry": {
+    "registry_snapshot_sha256": "0b502cd50b8c99a408ea3cd2aa1bfc393c8affae8d0dd85889b97036c5884946",
+    "registry_rows_scanned": 1172017,
+    "requested": 100,
+    "selected": 100
+  },
+  "operations": {
+    "requests": 831,
+    "bytes": 24223648,
+    "p50_ms": 1250,
+    "p95_ms": 1577
+  },
+  "validation": {
+    "passed": true,
+    "checks": {
+      "exact_expected_count": true,
+      "unique_organisation_numbers": true,
+      "all_entity_states_terminal": true,
+      "all_module_states_terminal": true,
+      "zero_silent_drops": true
+    },
+    "invalid_states": []
+  }
+}
+
+real	2m35.646s
+user	0m0.015s
+sys	0m0.000s
