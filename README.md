@@ -6,6 +6,12 @@ Built on the Builderr Signalpost reference agent (the published starter kit, unc
 2. **Hiring and dated public activity from the verified site only:** careers pages, schema.org `JobPosting`, links to Norwegian applicant-tracking systems (Webcruiter, Jobbnorge, Teamtailor, ReCman, HR-manager, Easycruit, Finn job ads, NAV ads …), RSS/Atom feeds advertised by the site, schema.org `Article`, and `<article><time datetime>` entries.
 3. **Claim-level envelope and a source-bounded summary.** Each envelope now carries `claims[]` (one of `available / not_available / blocked / not_applicable / ambiguous / failed`, never zero-for-missing), `evidence[]` (source URL, retrieval time, reporting period, content SHA-256, extraction method), and a template `summary` whose every sentence cites evidence ids and whose `unknowns` lists what was not found.
 
+4. **Publication gates — a wrong match is worse than a blank** (`src/norway_company_agent/quality.py`, added after reviewer feedback on 1 November 2026). Uncertain news, jobs and social matches are left blank with a one-line reason (`availability: "ambiguous"`, `value: null`, `reason`), never published:
+   - **News** keeps only dated articles on the company's own site. Withheld: default CMS posts ("Hello world!", "Sample Page"), static pages (`/om-oss`, `/tjenester`, …), items whose only URL is the homepage or the listing page, comment feeds, off-site links, future or implausible dates. Items read off a homepage or listing page are opened and kept only if the article page itself prints a publication date (`article:published_time`, JSON-LD Article/BlogPosting `datePublished`, or `<article><time>`); otherwise the reason is "page has no date".
+   - **Jobs** keeps only the company's own careers page or real postings. Withheld: login-only applicant-system dashboards (`app.teamtailor.com`, `/login`, `/users/sign_in` …), vendor homepages and "powered by" links (`teamtailor.com`, `webcruiter.no/` …), careers links that redirect to the homepage or show a password field, pages that do not mention jobs, and postings whose `validThrough` has passed.
+   - **Social profiles** are published only when the handle names this exact legal entity. Withheld: handles that carry only part of the legal name (the shared group/brand), handles naming a group (`group`, `gruppen`, `konsern`, `holding` …), handles naming another company in the official BRREG group structure (`konsernstruktur`), and any profile or website that the same run published for more than one company.
+   - **Confidence per company** (`envelope.confidence` and `confidence` on every available claim): the weakest published claim decides the level. Registry facts anchored on the organisation number: 0.99. Website proven by the organisation number printed on it: 0.97 (high). Website matched on the exact legal name only: 0.85 (medium); site-derived news, jobs and profiles inherit ×0.95. `confidence.sections` gives website / social / news / jobs as published, withheld (with reason) or blank (with reason). The viewer shows the level on every company, a confidence filter, and the reason for every blank.
+
 Safety: one company that throws is returned as a `source_error` row instead of dropping the batch; optional enrichment stops at 60 % of `--time-budget-seconds` (default 2400, or `SIGNALPOST_TIME_BUDGET_S`) so every company still returns.
 
 ## One command (evaluator)
@@ -26,7 +32,14 @@ uv sync --frozen && uv run python scripts/run_competition_batch.py   --organisat
 | Secrets | None required. |
 | Expected cost per official run | **USD 0.00** |
 
-## 100-company smoke test
+## 100-company smoke test — one command
+
+```bash
+uv sync --frozen && uv run python scripts/smoke_100.py
+```
+
+Reruns all 100 companies in `smoke/smoke-companies.jsonl` with the evaluator command (downloads the BRREG snapshot to `data-local/` if it is missing), rebuilds the viewer, checks the run against the daily budget (45 minutes, 2,000 requests, USD 10), and prints a short report: validation, runtime, requests, cost, published websites / social profiles / news / jobs, withheld candidates by reason, confidence levels, and the change against an earlier run (`--previous`, default `smoke/v3/envelopes.jsonl`). Output: `smoke/latest/SMOKE_REPORT.md`, `smoke-summary.json`, `envelopes.jsonl`, `report.json`, `viewer.html`.
+
 
 `smoke/` holds the local smoke test (`smoke/smoke-companies.jsonl`, selected with `select_entry_batch.py` default seed): `smoke/v3/report.json` (machine-readable run report), `smoke/v3/envelopes.jsonl` (100 terminal envelopes), `smoke/v3/viewer.html` (desktop/mobile viewer), and `smoke/compare-baseline-v3.json` (same batch, reference behaviour vs. this entry). See `smoke/SMOKE.md`.
 

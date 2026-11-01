@@ -8,3 +8,6 @@ smoke/holdout-v2/profiles.jsonl
 smoke/v1/
 smoke/v2/
 .pytest_cache/
+smoke/holdout-latest/profiles.jsonl
+smoke/holdout-latest.log
+smoke/latest.log

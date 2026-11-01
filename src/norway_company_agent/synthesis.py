@@ -10,7 +10,9 @@ import hashlib
 import json
 from typing import Any
 
-SYNTHESIS_VERSION = "signalpost-template-summary-v1"
+from .quality import REGISTRY_CONFIDENCE, level, site_confidence
+
+SYNTHESIS_VERSION = "signalpost-template-summary-v2"
 
 STATE_MAP = {
     "available": "available",
@@ -59,16 +61,23 @@ def build_claims(profile: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
             "note": record.get("note"),
         })
 
-    def claim(field: str, value: Any, source: str, *, availability: str | None = None, period: str | None = None) -> None:
+    def claim(field: str, value: Any, source: str, *, availability: str | None = None, period: str | None = None, confidence: float | None = None, reason: str | None = None, candidate: Any = None) -> None:
         record = records.get(source) or {}
         state = availability or STATE_MAP.get(record.get("status"), "failed")
-        claims.append({
+        row = {
             "field": field,
             "value": value if state == "available" else None,
             "availability": state,
             "reporting_period": period,
+            "confidence": round(confidence if confidence is not None else REGISTRY_CONFIDENCE, 2) if state == "available" else None,
             "evidence_ids": [ids[source]] if source in ids else [],
-        })
+        }
+        if state != "available":
+            row["reason"] = reason or record.get("note") or None
+            if candidate is not None:
+                # What was considered and why it was left blank; never a published value.
+                row["withheld_candidate"] = candidate
+        claims.append(row)
 
     registry = (records.get("registry_live") or {}).get("value") or {}
     bulk = profile
@@ -114,33 +123,43 @@ def build_claims(profile: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
     website = records.get("website") or {}
     wvalue = website.get("value") or {}
     publishable = bool((wvalue.get("identity_assessment") or {}).get("publishable"))
+    site_conf = site_confidence(wvalue) if website.get("status") == "available" else None
     if website.get("status") == "available" and publishable:
-        claim("official_website", wvalue.get("final_url"), "website")
+        claim("official_website", wvalue.get("final_url"), "website", confidence=site_conf)
         for link in wvalue.get("social_links") or []:
-            claim(f"company_profile.{link['platform']}", link["url"], "website")
+            claim(f"company_profile.{link['platform']}", link["url"], "website", confidence=(site_conf or 0) * 0.95)
+        for item in wvalue.get("social_withheld") or []:
+            claim(f"company_profile.{item.get('platform') or 'unknown'}", None, "website", availability="ambiguous", reason=item.get("reason"), candidate={"url": item.get("url")})
     elif website.get("status") == "available":
-        claim("official_website", None, "website", availability="ambiguous")
+        reasons = (wvalue.get("identity_assessment") or {}).get("reasons") or []
+        claim("official_website", None, "website", availability="ambiguous", reason=wvalue.get("withheld_reason") or (reasons[-1] if reasons else "site could not be tied to this exact company"), candidate={"url": wvalue.get("final_url") or website.get("source_url")})
     else:
-        claim("official_website", None, "website")
+        claim("official_website", None, "website", reason=website.get("note") or "no website could be tied to this organisation number")
 
+    derived = (site_conf or 0) * 0.95 if publishable else None
     hiring = records.get("hiring") or {}
     hvalue = hiring.get("value") or {}
     if hiring.get("status") == "available":
         if hvalue.get("careers_page"):
-            claim("hiring.careers_page", hvalue["careers_page"]["url"], "hiring")
+            claim("hiring.careers_page", hvalue["careers_page"]["url"], "hiring", confidence=derived)
         for job in hvalue.get("job_postings") or []:
-            claim("hiring.job_posting", job, "hiring", period=job.get("posted"))
+            claim("hiring.job_posting", job, "hiring", period=job.get("posted"), confidence=derived)
         for link in hvalue.get("applicant_tracking_links") or []:
-            claim("hiring.ats_link", link, "hiring")
+            claim("hiring.ats_link", link, "hiring", confidence=derived)
     else:
         claim("hiring", None, "hiring")
+    for item in hvalue.get("withheld") or []:
+        claim("hiring.withheld", None, "hiring", availability="ambiguous", reason=item.get("reason"), candidate={"url": item.get("url")})
 
     activity = records.get("public_activity") or {}
+    avalue = activity.get("value") or {}
     if activity.get("status") == "available":
-        for item in (activity.get("value") or {}).get("items") or []:
-            claim("public_activity.item", item, "public_activity", period=item.get("published"))
+        for item in avalue.get("items") or []:
+            claim("public_activity.item", item, "public_activity", period=item.get("published"), confidence=derived)
     else:
         claim("public_activity", None, "public_activity")
+    for item in avalue.get("withheld") or []:
+        claim("public_activity.withheld", None, "public_activity", availability="ambiguous", reason=item.get("reason"), candidate={"title": item.get("title"), "url": item.get("url")})
 
     context = {
         "registry": registry,
@@ -156,7 +175,53 @@ def build_claims(profile: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
         "ids": ids,
         "description": (wvalue.get("description") or "")[:300] if publishable else "",
     }
+    context["confidence"] = company_confidence(claims, records)
     return claims, evidence_rows, context
+
+
+def _section(claims: list[dict[str, Any]], prefixes: tuple[str, ...], blank_note: str | None) -> dict[str, Any]:
+    rows = [item for item in claims if item["field"].startswith(prefixes)]
+    published = [item for item in rows if item["availability"] == "available"]
+    withheld = [item for item in rows if item["availability"] == "ambiguous"]
+    if published:
+        state, reason = "published", None
+    elif withheld:
+        state, reason = "withheld", withheld[0].get("reason")
+    else:
+        state, reason = "blank", blank_note
+    return {"state": state, "published": len(published), "withheld": len(withheld), "reason": reason}
+
+
+def company_confidence(claims: list[dict[str, Any]], records: dict[str, Any]) -> dict[str, Any]:
+    """Per-company confidence: the weakest published claim decides the level.
+
+    Registry facts are anchored on the organisation number. Anything outside the
+    registry inherits the confidence of the website it came from: org number
+    printed on the site is high, exact legal name only is medium. Withheld
+    candidates do not lower the level (they are not published) but are listed
+    with their one-line reason.
+    """
+    published = [item for item in claims if item["availability"] == "available" and item.get("confidence") is not None]
+    score = min((item["confidence"] for item in published), default=REGISTRY_CONFIDENCE)
+
+    def note(key: str) -> str | None:
+        return (records.get(key) or {}).get("note")
+
+    sections = {
+        "website": _section(claims, ("official_website",), note("website") or "no website could be tied to this organisation number"),
+        "social": _section(claims, ("company_profile.",), "no company-owned social profile linked from the verified site"),
+        "news": _section(claims, ("public_activity",), note("public_activity")),
+        "jobs": _section(claims, ("hiring",), note("hiring")),
+    }
+    website_claim = next((item for item in claims if item["field"] == "official_website" and item["availability"] == "available"), None)
+    if website_claim is None:
+        basis = "Registry facts only, anchored on the organisation number; nothing outside the registry is published."
+    elif (website_claim.get("confidence") or 0) >= 0.9:
+        basis = "Website proven by this company's organisation number printed on the site; site-derived facts inherit that proof."
+    else:
+        basis = "Website matched on the exact legal name, not the organisation number; site-derived facts are medium confidence."
+    reasons = [f"{name}: {section['reason']}" for name, section in sections.items() if section["state"] == "withheld" and section.get("reason")]
+    return {"level": level(score), "score": round(score, 2), "basis": basis, "sections": sections, "withheld_reasons": reasons}
 
 
 def build_summary(profile: dict[str, Any], context: dict[str, Any], changes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -245,11 +310,15 @@ def build_summary(profile: dict[str, Any], context: dict[str, Any], changes: lis
     else:
         sentences.append({"text": "No previous snapshot was supplied for comparison in this run, or nothing material changed.", "evidence_ids": []})
 
+    for line in (context.get("confidence") or {}).get("withheld_reasons") or []:
+        unknowns.append(f"Left blank on purpose ({line}).")
+
     for sentence in sentences:
         sentence["evidence_ids"] = [item for item in sentence["evidence_ids"] if item]
     return {
         "method": SYNTHESIS_VERSION,
         "policy": "Deterministic template over published claims only; no free-form AI text.",
+        "confidence": (context.get("confidence") or {}).get("level"),
         "sentences": sentences,
         "unknowns": unknowns,
     }

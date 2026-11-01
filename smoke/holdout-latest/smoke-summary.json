@@ -1,0 +1,90 @@
+{
+  "run_id": "smoke-20261101T234317Z",
+  "envelopes": 200,
+  "expected": 200,
+  "validation_passed": true,
+  "minutes": 4.43,
+  "requests": 1813,
+  "third_party_cost_usd": 0.0,
+  "within_budget": true,
+  "published": {
+    "websites": 19,
+    "social_profiles": 19,
+    "companies_with_news": 4,
+    "news_items": 27,
+    "companies_with_jobs": 2,
+    "job_items": 2
+  },
+  "withheld": {
+    "website": {
+      "registry-linked URL lacks strong exact-entity identity evidence": 14,
+      "partial legal-name overlap only": 2
+    },
+    "social": {
+      "handle does not carry the legal name": 6
+    },
+    "news": {
+      "item points at the homepage, not an article": 2,
+      "date belongs to a listing or static page, not an article": 2
+    },
+    "jobs": {}
+  },
+  "confidence": {
+    "high": 188,
+    "medium": 12
+  },
+  "claim_states": {
+    "available": 3430,
+    "not_available": 888,
+    "ambiguous": 26,
+    "failed": 6,
+    "blocked": 1
+  },
+  "non_available_claims_with_value": 0,
+  "publication_gates": {
+    "shared_social_urls": 0,
+    "social_links_withheld": 0,
+    "shared_websites": 0,
+    "websites_withheld": 0
+  },
+  "compared_with": "smoke/holdout-v2/envelopes.jsonl",
+  "change": {
+    "website": {
+      "before": 19,
+      "after": 19,
+      "removed": 1,
+      "added": 1,
+      "removed_examples": [
+        "894729252 https://sjor.no/"
+      ]
+    },
+    "social": {
+      "before": 19,
+      "after": 19,
+      "removed": 0,
+      "added": 0,
+      "removed_examples": []
+    },
+    "news": {
+      "before": 31,
+      "after": 27,
+      "removed": 4,
+      "added": 0,
+      "removed_examples": [
+        "915285988 https://ramlos.no/",
+        "937018967 https://status-as.no/",
+        "937018967 https://status-as.no/aktuelt/",
+        "970903828 https://www.dekkpartner.no/artikler"
+      ]
+    },
+    "jobs": {
+      "before": 3,
+      "after": 2,
+      "removed": 1,
+      "added": 0,
+      "removed_examples": [
+        "980527476 https://www.linkrekruttering.no/rekruttering/"
+      ]
+    }
+  }
+}

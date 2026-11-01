@@ -1,0 +1,50 @@
+{
+  "run_id": "smoke-20261101T234317Z",
+  "started_at": "2026-11-01T23:43:18.289491Z",
+  "completed_at": "2026-11-01T23:47:43.892363Z",
+  "expected_count": 200,
+  "emitted_envelopes": 200,
+  "resumed_profiles": 0,
+  "profiles_fetched_this_run": 200,
+  "modules": [
+    "registry",
+    "accounting_obligation",
+    "registry_live",
+    "financials",
+    "roles",
+    "group",
+    "locations",
+    "website",
+    "hiring",
+    "public_activity"
+  ],
+  "registry": {
+    "registry_snapshot_sha256": "0b502cd50b8c99a408ea3cd2aa1bfc393c8affae8d0dd85889b97036c5884946",
+    "registry_rows_scanned": 1170545,
+    "requested": 200,
+    "selected": 200
+  },
+  "operations": {
+    "requests": 1813,
+    "bytes": 58533635,
+    "p50_ms": 1296,
+    "p95_ms": 2312
+  },
+  "validation": {
+    "passed": true,
+    "checks": {
+      "exact_expected_count": true,
+      "unique_organisation_numbers": true,
+      "all_entity_states_terminal": true,
+      "all_module_states_terminal": true,
+      "zero_silent_drops": true
+    },
+    "invalid_states": []
+  },
+  "publication_gates": {
+    "shared_social_urls": 0,
+    "social_links_withheld": 0,
+    "shared_websites": 0,
+    "websites_withheld": 0
+  }
+}

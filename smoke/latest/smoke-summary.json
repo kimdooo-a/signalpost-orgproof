@@ -1,0 +1,82 @@
+{
+  "run_id": "smoke-20261101T234037Z",
+  "envelopes": 100,
+  "expected": 100,
+  "validation_passed": true,
+  "minutes": 2.66,
+  "requests": 863,
+  "third_party_cost_usd": 0.0,
+  "within_budget": true,
+  "published": {
+    "websites": 4,
+    "social_profiles": 3,
+    "companies_with_news": 2,
+    "news_items": 24,
+    "companies_with_jobs": 0,
+    "job_items": 0
+  },
+  "withheld": {
+    "website": {
+      "registry-linked URL lacks strong exact-entity identity evidence": 3,
+      "most legal-name tokens appear, but exact identity is incomplete": 1
+    },
+    "social": {},
+    "news": {},
+    "jobs": {}
+  },
+  "confidence": {
+    "high": 98,
+    "medium": 2
+  },
+  "claim_states": {
+    "available": 1674,
+    "not_available": 484,
+    "ambiguous": 4,
+    "blocked": 1
+  },
+  "non_available_claims_with_value": 0,
+  "publication_gates": {
+    "shared_social_urls": 0,
+    "social_links_withheld": 0,
+    "shared_websites": 0,
+    "websites_withheld": 0
+  },
+  "compared_with": "smoke/v3/envelopes.jsonl",
+  "change": {
+    "website": {
+      "before": 4,
+      "after": 4,
+      "removed": 1,
+      "added": 1,
+      "removed_examples": [
+        "933787141 https://www.aiota.no/"
+      ]
+    },
+    "social": {
+      "before": 3,
+      "after": 3,
+      "removed": 0,
+      "added": 0,
+      "removed_examples": []
+    },
+    "news": {
+      "before": 24,
+      "after": 24,
+      "removed": 4,
+      "added": 4,
+      "removed_examples": [
+        "827340162 https://novooi.com/showroom-kolleksjon/",
+        "827340162 https://novooi.com/spring-collection-2026/",
+        "827340162 https://novooi.com/studio-leie/",
+        "827340162 https://novooi.com/textiles-across-generations/"
+      ]
+    },
+    "jobs": {
+      "before": 0,
+      "after": 0,
+      "removed": 0,
+      "added": 0,
+      "removed_examples": []
+    }
+  }
+}

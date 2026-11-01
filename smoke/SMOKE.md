@@ -36,3 +36,27 @@ The competition's recall score is relative to the pooled, checked findings of al
 ## Code version note
 
 `v3/` was produced at commit `41ce9ec`. The following commit only lets `iter_bulk` read an uncompressed CSV snapshot as well as the gzip file BRREG serves; for the gzip snapshot used here the code path and output are unchanged.
+
+---
+
+# Rerun with publication gates — 2026-11-02 (`smoke/latest/`)
+
+One command: `uv run python scripts/smoke_100.py` (report: `smoke/latest/SMOKE_REPORT.md`, `smoke-summary.json`).
+Changes since `v3`: news, jobs and social gates plus per-company confidence (see README, "Publication gates").
+
+| Run | Envelopes | Validation | Wall time | Requests | Cost |
+|---|---:|---|---:|---:|---:|
+| 100-company smoke, `smoke/latest/` | 100/100 | passed | 2.66 min | 863 | USD 0.00 |
+| 200-company holdout, `smoke/holdout-latest/` | 200/200 | passed | 4.43 min | 1,813 | USD 0.00 |
+
+Published matches, before → after:
+
+| Matches | 100 smoke (`v3` → latest) | 200 holdout (`holdout-v2` → latest) |
+|---|---|---|
+| Websites | 4 → 4 (one company's URL now canonical without `www`) | 19 → 19 (one company's URL now with `www`) |
+| Social profiles | 3 → 3 | 19 → 19 |
+| News items | 24 → 24 (4 newer posts replaced 4 older ones in the 20-item window) | 31 → 27 — **4 withheld**: 2 homepages and 2 listing pages had been published as news |
+| Jobs | 0 → 0 | 3 → 2 — **1 removed**: a recruitment agency's service page (`/rekruttering/`) had been published as its careers page |
+
+Confidence: 100 smoke — high 98, medium 2. 200 holdout — high 188, medium 12.
+Every non-available claim has `value: null`; withheld candidates carry `reason` and `withheld_candidate`.

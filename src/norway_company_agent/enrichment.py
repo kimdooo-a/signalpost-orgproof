@@ -39,6 +39,17 @@ from bs4 import BeautifulSoup
 
 from .evidence import evidence, utc_now
 from .identity import apply_website_identity_gate
+from .quality import (
+    QUALITY_VERSION,
+    article_page_date,
+    group_members,
+    is_comment_feed,
+    screen_social_links,
+    screen_ats_links,
+    screen_careers_page,
+    screen_job_posting,
+    screen_news,
+)
 from .website import (
     SAFE_OPENER,
     USER_AGENT,
@@ -48,7 +59,7 @@ from .website import (
     fetch_website,
 )
 
-ENRICHMENT_VERSION = "signalpost-enrichment-v1"
+ENRICHMENT_VERSION = "signalpost-enrichment-v2"
 
 LEGAL_SUFFIXES = {
     "as", "asa", "ans", "da", "enk", "sa", "nuf", "ba", "bl", "iks", "ks", "sf", "stiftelse",
@@ -62,7 +73,7 @@ GENERIC_TOKENS = {
 }
 CAREER_TERMS = (
     "karriere", "ledige-stillinger", "ledige_stillinger", "ledigestillinger", "stillinger", "jobb", "jobbe",
-    "career", "careers", "jobs", "join-us", "work-with-us", "rekruttering",
+    "career", "careers", "jobs", "join-us", "work-with-us",
 )
 NEWS_TERMS = ("nyheter", "aktuelt", "news", "presse", "press", "blogg", "blog", "artikler")
 ATS_HOSTS = {
@@ -88,6 +99,10 @@ ATS_HOSTS = {
 }
 MAX_GUESSES = 4
 MAX_EXTRA_PAGES = 3
+# Items read off a homepage or listing page are opened before publication; the
+# article page itself must print its publication date. Feed entries carry their
+# own pubDate and are not re-fetched.
+MAX_ARTICLE_CHECKS = 6
 
 
 def _ascii_tokens(value: Any) -> list[str]:
@@ -380,7 +395,10 @@ def _parse_feed(raw: bytes, feed_url: str) -> list[dict[str, Any]]:
             continue
         fields = {child.tag.rsplit("}", 1)[-1]: child for child in node}
         title = (fields.get("title").text or "").strip() if fields.get("title") is not None else ""
-        link_node = fields.get("link")
+        # Atom entries can carry several <link> elements (alternate, replies, edit); only the
+        # alternate (or rel-less) link is the article itself.
+        link_nodes = [child for child in node if child.tag.rsplit("}", 1)[-1] == "link"]
+        link_node = next((child for child in link_nodes if (child.get("rel") or "alternate") == "alternate"), None)
         link = ""
         if link_node is not None:
             link = (link_node.text or link_node.get("href") or "").strip()
@@ -452,6 +470,9 @@ def enrich_from_site(profile: dict[str, Any], website: dict[str, Any], metrics: 
         kind = str(link.get("type") or "").casefold()
         if "rss" in kind or "atom" in kind:
             feed = urllib.parse.urljoin(home["url"], str(link.get("href")))
+            # WordPress advertises a comments feed next to the posts feed; comments are not news.
+            if is_comment_feed(feed, str(link.get("title") or "")):
+                continue
             if _registered_domain(feed) == _registered_domain(home["url"]):
                 feeds.append(feed)
     jobs: list[dict[str, Any]] = []
@@ -462,6 +483,8 @@ def enrich_from_site(profile: dict[str, Any], website: dict[str, Any], metrics: 
 
     extra = 0
     career_page = None
+    career_check: dict[str, Any] = {}
+    news_listing_pages: list[str] = []
     for page_url in careers + news + feeds[:1]:
         if extra >= MAX_EXTRA_PAGES:
             break
@@ -489,10 +512,12 @@ def enrich_from_site(profile: dict[str, Any], website: dict[str, Any], metrics: 
         page_soup = BeautifulSoup(body, "lxml")
         if page_url in careers:
             career_page = {"url": page["url"], "title": page_soup.title.get_text(" ", strip=True)[:300] if page_soup.title else "", "content_sha256": page["sha256"], "retrieved_at": page["retrieved_at"]}
+            career_check = {"body_text": _visible_text(body), "has_password_field": bool(page_soup.select('input[type="password"]'))}
             ats.extend(_ats_links(page["url"], page_soup))
             for obj in _walk_types(_structured(body, page["url"]), {"JobPosting"}):
                 jobs.append({"title": str(obj.get("title") or "")[:300], "posted": _iso_date(obj.get("datePosted")), "valid_through": _iso_date(obj.get("validThrough")), "url": page["url"], "method": "schema_org_jobposting"})
         if page_url in news:
+            news_listing_pages.append(page["url"])
             for item in _page_dated_items(body, page["url"]):
                 item["source_url"] = page["url"]
                 activity.append(item)
@@ -500,6 +525,26 @@ def enrich_from_site(profile: dict[str, Any], website: dict[str, Any], metrics: 
     ats = list({item["url"]: item for item in ats}.values())
     activity = list({(item["title"], item["published"]): item for item in activity}.values())
     activity.sort(key=lambda item: item["published"], reverse=True)
+    # Publication gates (reviewer feedback 2026-11-01): a wrong match is worse than a blank.
+    activity, news_withheld = screen_news(activity, site_url=home["url"], read_from=[home["url"], *news_listing_pages])
+    activity, verify_withheld = verify_article_pages(activity, home["url"], metrics)
+    news_withheld += verify_withheld
+    ats, ats_withheld = screen_ats_links(ats)
+    jobs_withheld: list[dict[str, Any]] = []
+    kept_jobs: list[dict[str, Any]] = []
+    for job in jobs:
+        reason = screen_job_posting(job)
+        if reason:
+            jobs_withheld.append({"title": job.get("title"), "url": job.get("url"), "reason": reason})
+        else:
+            kept_jobs.append(job)
+    jobs = kept_jobs
+    if career_page:
+        reason = screen_careers_page(career_page, site_url=home["url"], body_text=career_check.get("body_text", ""), has_password_field=career_check.get("has_password_field", False))
+        if reason:
+            jobs_withheld.append({"url": career_page["url"], "kind": "careers_page", "reason": reason})
+            career_page = None
+    hiring_withheld = ats_withheld + jobs_withheld
     retrieved = utc_now()
     if jobs or ats or career_page:
         hiring = evidence(
@@ -511,26 +556,97 @@ def enrich_from_site(profile: dict[str, Any], website: dict[str, Any], metrics: 
                 "careers_page": career_page,
                 "job_postings": jobs[:30],
                 "applicant_tracking_links": ats[:30],
+                "withheld": hiring_withheld[:30],
                 "pages_read": pages_read,
                 "extractor": ENRICHMENT_VERSION,
+                "gates": QUALITY_VERSION,
             },
             retrieved_at=retrieved,
             content_sha256=(career_page or {}).get("content_sha256") or home["sha256"],
             note="Hiring signals from the exact-identity company site. A careers page is not proof of an open vacancy; job_postings/ATS links are.",
         )
     else:
-        hiring = evidence("hiring", "not_found", "company_owned_site", home["url"], value={"pages_read": pages_read, "extractor": ENRICHMENT_VERSION}, retrieved_at=retrieved, note="Checked the verified site; no careers page, job posting or ATS link found")
+        note = "Checked the verified site; no careers page, job posting or ATS link found"
+        if hiring_withheld:
+            note = f"Left blank: {hiring_withheld[0]['reason']}" + (f" (+{len(hiring_withheld) - 1} more withheld)" if len(hiring_withheld) > 1 else "")
+        hiring = evidence("hiring", "not_found", "company_owned_site", home["url"], value={"withheld": hiring_withheld[:30], "pages_read": pages_read, "extractor": ENRICHMENT_VERSION, "gates": QUALITY_VERSION}, retrieved_at=retrieved, note=note)
     if activity:
         public_activity = evidence(
             "public_activity",
             "available",
             "company_owned_site",
             activity[0].get("source_url") or home["url"],
-            value={"items": activity[:20], "pages_read": pages_read, "extractor": ENRICHMENT_VERSION},
+            value={"items": activity[:20], "withheld": news_withheld[:20], "pages_read": pages_read, "extractor": ENRICHMENT_VERSION, "gates": QUALITY_VERSION},
             retrieved_at=retrieved,
             effective_at=activity[0]["published"],
             note="Dated items published by the exact-identity company site",
         )
     else:
-        public_activity = evidence("public_activity", "not_found", "company_owned_site", home["url"], value={"pages_read": pages_read, "extractor": ENRICHMENT_VERSION}, retrieved_at=retrieved, note="Checked the verified site; no dated news, article or feed entries found")
+        note = "Checked the verified site; no dated news, article or feed entries found"
+        if news_withheld:
+            note = f"Left blank: {news_withheld[0]['reason']}" + (f" (+{len(news_withheld) - 1} more withheld)" if len(news_withheld) > 1 else "")
+        public_activity = evidence("public_activity", "not_found", "company_owned_site", home["url"], value={"withheld": news_withheld[:20], "pages_read": pages_read, "extractor": ENRICHMENT_VERSION, "gates": QUALITY_VERSION}, retrieved_at=retrieved, note=note)
     return {"hiring": hiring, "public_activity": public_activity}
+
+
+def gate_social_links(profile: dict[str, Any]) -> dict[str, Any]:
+    """Withhold social profiles that may belong to a group, parent, sister or brand.
+
+    Runs after the website identity gate. The handle must name this exact legal
+    entity; a handle that names another company in the official group structure
+    (BRREG konsernstruktur) is withheld with that company named in the reason.
+    """
+    website = profile.get("evidence", {}).get("website") or {}
+    value = website.get("value") or {}
+    assessment = value.get("identity_assessment") or {}
+    if website.get("status") != "available" or not assessment.get("publishable"):
+        return website
+    group_record = profile.get("evidence", {}).get("group") or {}
+    group = group_members(group_record.get("value"), str(profile.get("organisation_number") or "")) if group_record.get("status") == "available" else []
+    kept, withheld = screen_social_links(list(value.get("social_links") or []), legal_name=str(profile.get("name") or ""), group=group, industry=profile.get("industry_label"))
+    published = {item["url"] for item in kept}
+    for item in value.get("social_link_assessments") or []:
+        if not item.get("publishable") and item.get("url") not in published and not any(w.get("url") == item.get("url") for w in withheld):
+            withheld.append({"platform": item.get("platform"), "url": item.get("url"), "reason": "handle does not carry the legal name"})
+    value["social_links"] = kept
+    value["social_withheld"] = withheld
+    value["group_members_checked"] = len(group)
+    website["value"] = value
+    return website
+
+
+def verify_article_pages(items: list[dict[str, Any]], site_url: str, metrics: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Open items that did not come from a feed and keep them only if the page prints a date."""
+    kept: list[dict[str, Any]] = []
+    withheld: list[dict[str, Any]] = []
+    checks = 0
+    for item in items:
+        if item.get("method") == "company_rss_feed":
+            kept.append(item)
+            continue
+        if checks >= MAX_ARTICLE_CHECKS:
+            withheld.append({"title": item.get("title"), "url": item.get("url"), "published": item.get("published"), "reason": "article page not opened within the request budget"})
+            continue
+        checks += 1
+        try:
+            if not _robots_allowed(item["url"], 6.0):
+                metrics["requests"] += 1
+                withheld.append({"title": item.get("title"), "url": item.get("url"), "published": item.get("published"), "reason": "article page disallowed by robots.txt"})
+                continue
+            page = _get(item["url"])
+            metrics["requests"] += 2
+            metrics["bytes"] += len(page["raw"])
+            metrics["latencies_ms"].append(page["elapsed_ms"])
+        except Exception as exc:
+            withheld.append({"title": item.get("title"), "url": item.get("url"), "published": item.get("published"), "reason": f"article page could not be opened ({type(exc).__name__})"})
+            continue
+        if _registered_domain(page["url"]) != _registered_domain(site_url):
+            withheld.append({"title": item.get("title"), "url": item.get("url"), "published": item.get("published"), "reason": "article redirects off the company's own site"})
+            continue
+        page_date, reason = article_page_date(page["raw"].decode("utf-8", errors="replace"))
+        if not page_date:
+            withheld.append({"title": item.get("title"), "url": item.get("url"), "published": item.get("published"), "reason": reason})
+            continue
+        kept.append({**item, "published": page_date, "page_verified": True, "content_sha256": page["sha256"]})
+    kept.sort(key=lambda item: item["published"], reverse=True)
+    return kept, withheld

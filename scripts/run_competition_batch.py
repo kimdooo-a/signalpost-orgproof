@@ -17,7 +17,8 @@ from norway_company_agent.evidence import utc_now  # noqa: E402
 from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
 from norway_company_agent.official import fetch_official_modules  # noqa: E402
 from norway_company_agent.website import fetch_website  # noqa: E402
-from norway_company_agent.enrichment import discover_website, enrich_from_site  # noqa: E402
+from norway_company_agent.enrichment import discover_website, enrich_from_site, gate_social_links  # noqa: E402
+from norway_company_agent.quality import apply_batch_consistency  # noqa: E402
 from norway_company_agent.synthesis import build_claims, build_summary  # noqa: E402
 
 
@@ -74,6 +75,7 @@ def main() -> None:
             website_record, website_metrics = fetch_website(profile.get("website"))
             profile["evidence"]["website"] = apply_website_identity_gate(profile, website_record)["website"]
             gated = profile["evidence"]["website"]
+            gate_social_links(profile)
             if time.monotonic() > soft_deadline:
                 from norway_company_agent.evidence import evidence as _ev
                 note = "optional enrichment skipped to keep the run inside its time budget"
@@ -89,6 +91,7 @@ def main() -> None:
                     if gated.get("status") == "available":
                         discovered["value"]["registry_listed_candidate"] = {"url": gated.get("source_url"), "identity_assessment": (gated.get("value") or {}).get("identity_assessment")}
                     profile["evidence"]["website"] = discovered
+                    gate_social_links(profile)
             if "hiring" in requested_modules or "public_activity" in requested_modules:
                 extra = enrich_from_site(profile, profile["evidence"]["website"], website_metrics)
                 for key in ("hiring", "public_activity"):
@@ -144,6 +147,8 @@ def main() -> None:
 
     completed_at = utc_now()
     ordered_profiles = [state[org] for org in orgs]
+    # Cross-company check: a profile or site published for several companies is a group/chain page.
+    batch_consistency = apply_batch_consistency(ordered_profiles)
     envelopes = []
     for profile in ordered_profiles:
         envelope = terminal_envelope(profile, run_id=args.run_id, modules=requested_modules, started_at=started_at, completed_at=completed_at)
@@ -152,6 +157,8 @@ def main() -> None:
             envelope["claims"] = claims
             envelope["evidence"] = evidence_rows
             envelope["summary"] = build_summary(profile, context, profile.get("changes"))
+            envelope["confidence"] = context["confidence"]
+            profile["confidence"] = context["confidence"]
             available = [item for item in claims if item["availability"] == "available"]
             envelope["availability"] = "available" if available else "not_available"
         except Exception as exc:  # never drop a row: a broken synthesis is a failed state, not a missing envelope
@@ -185,6 +192,7 @@ def main() -> None:
         "registry": registry_metadata,
         "operations": operations,
         "validation": validation,
+        "publication_gates": batch_consistency,
     }
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
     Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -199,7 +199,31 @@ def compact(row: dict, external_observations: list[dict] | None = None) -> dict:
         "liveStatus": live.get("status", "not_run"),
         "changes": row.get("change_history") or [],
         "external": external,
+        "confidence": row.get("confidence") or {},
+        "siteNews": site_section(evidence.get("public_activity", {}), "items"),
+        "siteJobs": site_section(evidence.get("hiring", {}), None),
+        "socialWithheld": website_value.get("social_withheld") or [],
     }
+
+
+def site_section(record: dict, list_key: str | None) -> dict:
+    """News/jobs from the verified company site, with withheld candidates and their one-line reasons."""
+    value = record.get("value") or {}
+    published = record.get("status") == "available"
+    section = {
+        "status": record.get("status", "not_run"),
+        "note": record.get("note"),
+        "source": record.get("source_url"),
+        "retrievedAt": record.get("retrieved_at"),
+        "withheld": (value.get("withheld") or [])[:10],
+    }
+    if list_key:
+        section["items"] = (value.get(list_key) or [])[:10] if published else []
+    else:
+        section["careersPage"] = value.get("careers_page") if published else None
+        section["postings"] = (value.get("job_postings") or [])[:10] if published else []
+        section["boards"] = (value.get("applicant_tracking_links") or [])[:10] if published else []
+    return section
 
 
 def build(rows: list[dict], score: dict | None, control_loop: dict | None = None, independent_score: dict | None = None, external_by_org: dict[str, list[dict]] | None = None) -> str:
@@ -268,6 +292,22 @@ const baseRequestedModes=requestedModes;requestedModes=question=>{{const modes=b
 renderAgent=()=>{{const x=selected;if(!x){{$('#agent-output').innerHTML='<p>Choose a company first.</p>';return}}const modes=agentQuestion?requestedModes(agentQuestion):[agentMode],labels={{overview:'Company record',financials:'Financials',leaders:'Leadership',locations:'Locations',social:'LinkedIn',hiring:'Hiring',activity:'Public activity',sentiment:'Sentiment'}};let body=modes.map(mode=>`<div class="answer-block"><small>${{labels[mode]||esc(mode)}}</small>${{agentBody(x,mode)}}</div>`).join('');if(agentQuestion)body=`<p class="agent-question"><small>Your question</small><br><strong>${{esc(agentQuestion)}}</strong></p>`+body;$('#agent-output').innerHTML=body;$('#agent-buttons').querySelectorAll('button').forEach(b=>b.classList.toggle('active',!agentQuestion&&b.dataset.mode===agentMode))}};
 const baseRenderList=renderList;renderList=()=>{{baseRenderList();queueMicrotask(injectLinkedInLayer)}};new MutationObserver(injectLinkedInLayer).observe($('#profile'),{{childList:true}});injectLinkedInLayer();renderAgent();
 if(SCORE.scorer==='signalpost_all_source_completeness_v1')$('#core-score').textContent=`${{Number(SCORE.raw_score||0).toFixed(2)}}/100 experimental · ${{Number(SCORE.awardable_score||0).toFixed(2)}}/100 strict`;
+</script><script>
+const CONF_LABEL={{high:'High confidence',medium:'Medium confidence',low:'Low confidence'}};
+function confChip(x){{const c=x.confidence||{{}};if(!c.level)return '';const cls=c.level==='high'?'good':c.level==='medium'?'warn':'';return `<span class="chip ${{cls}}" title="${{esc(c.basis||'')}}">${{esc(CONF_LABEL[c.level]||c.level)}}</span>`}}
+$('.filters').insertAdjacentHTML('beforeend','<select id="conf" aria-label="Confidence"><option value="">Any confidence</option><option value="high">High confidence</option><option value="medium">Medium confidence</option><option value="low">Low confidence</option><option value="withheld">Has withheld matches</option></select>');
+const baseFiltered=filtered;filtered=()=>{{const c=$('#conf').value;return baseFiltered().filter(x=>!c||(c==='withheld'?((x.confidence?.withheld_reasons||[]).length>0):x.confidence?.level===c))}};
+$('#conf').addEventListener('change',()=>{{selected=null;renderList()}});
+function annotateRows(){{$('#list').querySelectorAll('[data-org]').forEach(b=>{{if(b.querySelector('.conf-chip'))return;const x=DATA.find(d=>d.org===b.dataset.org);if(!x||!x.confidence?.level)return;b.insertAdjacentHTML('beforeend',`<span class="conf-chip">${{confChip(x)}}</span>`)}})}}
+const confBaseRenderList=renderList;renderList=()=>{{confBaseRenderList();annotateRows()}};
+const SECTION_LABEL={{website:'Website',social:'Social profiles',news:'News (company site)',jobs:'Jobs (company site)'}};
+function reasonLine(sec){{if(!sec)return '<small>not checked</small>';if(sec.state==='published')return `<strong style="color:var(--good)">${{sec.published}} published</strong>${{sec.withheld?` <small>· ${{sec.withheld}} withheld</small>`:''}}`;if(sec.state==='withheld')return `<strong style="color:var(--warn)">Can't tell — left blank</strong><small>${{esc(sec.reason||'')}}</small>`;return `<strong>Blank</strong><small>${{esc(sec.reason||'nothing found')}}</small>`}}
+function withheldList(rows){{return rows.length?`<details class="source"><summary>${{rows.length}} candidate(s) withheld</summary>${{rows.map(w=>`<div>${{esc(w.reason)}} — <code>${{esc(w.title||w.url||'')}}</code></div>`).join('')}}</details>`:''}}
+function renderConfidenceLayer(x){{const c=x.confidence||{{}},secs=c.sections||{{}},news=x.siteNews||{{}},jobs=x.siteJobs||{{}};const cards=Object.keys(SECTION_LABEL).map(k=>`<div class="signal-card"><span>${{SECTION_LABEL[k]}}</span>${{reasonLine(secs[k])}}</div>`).join('');const newsItems=(news.items||[]).map(n=>`<div class="activity"><small>${{esc(n.published)}}</small><p><a href="${{esc(n.url)}}" target="_blank" rel="noreferrer">${{esc(n.title)}}</a></p></div>`).join('');const jobItems=[jobs.careersPage?`<div class="item"><strong>Careers page</strong><small><a href="${{esc(jobs.careersPage.url)}}" target="_blank" rel="noreferrer">${{esc(jobs.careersPage.url)}}</a></small></div>`:'',...(jobs.postings||[]).map(j=>`<div class="item"><strong>${{esc(j.title)}}</strong><small>posted ${{esc(j.posted||'date not given')}}</small></div>`),...(jobs.boards||[]).map(b=>`<div class="item"><strong>${{esc(b.platform)}} job board</strong><small><a href="${{esc(b.url)}}" target="_blank" rel="noreferrer">${{esc(b.url)}}</a></small></div>`)].join('');return `<section id="confidence-layer"><div class="section-label">Match confidence</div><h3>${{c.level?esc(CONF_LABEL[c.level]):'Not assessed'}} <small style="font:400 13px Inter,sans-serif;color:var(--muted)">${{c.score!=null?'score '+esc(c.score):''}}</small></h3><p class="source">${{esc(c.basis||'')}} A wrong match is worse than a blank, so uncertain news, jobs and profiles are left blank with a reason.</p><div class="signal-grid">${{cards}}</div><h3 style="font-size:18px">Dated news from the company site</h3>${{newsItems?`<div class="activity-list">${{newsItems}}</div>`:`<p class="empty">${{esc(news.note||'No dated article published.')}}</p>`}}${{withheldList(news.withheld||[])}}<h3 style="font-size:18px;margin-top:16px">Jobs from the company site</h3>${{jobItems?`<div class="people">${{jobItems}}</div>`:`<p class="empty">${{esc(jobs.note||'No careers page or posting published.')}}</p>`}}${{withheldList(jobs.withheld||[])}}${{(x.socialWithheld||[]).length?`<h3 style="font-size:18px;margin-top:16px">Social profiles left blank</h3>${{withheldList(x.socialWithheld)}}`:''}}</section>`}}
+function injectConfidenceLayer(){{const root=$('#profile');if(!selected||!root||$('#confidence-layer'))return;const head=root.querySelector('.profile-head');if(!head)return;const chips=head.querySelector('.chips');if(chips&&!chips.querySelector('.conf-chip'))chips.insertAdjacentHTML('afterbegin',`<span class="conf-chip">${{confChip(selected)}}</span>`);const facts=root.querySelector('.fact-grid');(facts||head).insertAdjacentHTML('afterend',renderConfidenceLayer(selected))}}
+new MutationObserver(injectConfidenceLayer).observe($('#profile'),{{childList:true}});
+const confBaseAgentBody=agentBody;agentBody=(x,mode)=>{{const secs=x.confidence?.sections||{{}};if(mode==='hiring'&&secs.jobs)return secs.jobs.state==='published'?`<p>${{secs.jobs.published}} hiring item(s) from the verified company site.${{cite(x.siteJobs?.source)}}</p>`:`<p><strong>Left blank.</strong> ${{esc(secs.jobs.reason||'No careers page or posting found on the verified site.')}}</p>`;if(mode==='activity'&&secs.news)return secs.news.state==='published'?`<p>${{(x.siteNews?.items||[]).slice(0,3).map(n=>`<strong>${{esc(n.published)}}</strong> — ${{esc(n.title)}}`).join('<br>')}}${{cite(x.siteNews?.source)}}</p>`:`<p><strong>Left blank.</strong> ${{esc(secs.news.reason||'No dated article found on the verified site.')}}</p>`;return confBaseAgentBody(x,mode)}};
+renderList();injectConfidenceLayer();renderAgent();
 </script></body></html>'''
 
 
