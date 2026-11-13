@@ -1,7 +1,7 @@
 {
-  "run_id": "smoke-20261101T234037Z",
-  "started_at": "2026-11-01T23:40:37.910063Z",
-  "completed_at": "2026-11-01T23:43:17.408128Z",
+  "run_id": "smoke-20261113T215640Z",
+  "started_at": "2026-11-13T21:56:40.856822Z",
+  "completed_at": "2026-11-13T21:59:28.650740Z",
   "expected_count": 100,
   "emitted_envelopes": 100,
   "resumed_profiles": 0,
@@ -25,10 +25,10 @@
     "selected": 100
   },
   "operations": {
-    "requests": 863,
-    "bytes": 21173316,
-    "p50_ms": 1296,
-    "p95_ms": 1453
+    "requests": 824,
+    "bytes": 27142975,
+    "p50_ms": 1281,
+    "p95_ms": 3468
   },
   "validation": {
     "passed": true,
@@ -45,6 +45,25 @@
     "shared_social_urls": 0,
     "social_links_withheld": 0,
     "shared_websites": 0,
-    "websites_withheld": 0
+    "websites_withheld": 0,
+    "website_decisions": {
+      "published:name_and_registry_address_v1": 3,
+      "published:orgnr_on_site_v3": 2,
+      "published:registry_no_domain_name_v1": 2,
+      "withheld:name_missing_v1": 1,
+      "withheld:no_site": 91,
+      "withheld:other_orgnr_v1": 1
+    },
+    "rejected_discovery_candidates": {
+      "fetch_failed": 11,
+      "foreign_tld_v1": 10,
+      "guessed_name_only_v1": 10,
+      "name_missing_v1": 21,
+      "no_dns": 188,
+      "other_orgnr_v1": 1,
+      "parked_page_v1": 3,
+      "redirects_to_another_domain": 3,
+      "robots_disallow": 10
+    }
   }
 }

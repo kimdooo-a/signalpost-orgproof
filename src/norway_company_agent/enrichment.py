@@ -6,9 +6,10 @@ Three additions, all free and all company-owned or official sources:
    Candidate domains are derived from the legal name (``<name>.no`` and a few
    spelling variants). DNS resolution filters dead candidates without an HTTP
    request. A guessed domain is published only when the exact 9-digit
-   organisation number is printed on the fetched homepage or on a same-domain
-   contact/about page. Name similarity alone is never enough for a guessed
-   domain, because a guessed domain has no registry link backing it.
+   organisation number, or the legal name with the registry address, is
+   printed on the fetched homepage or a same-domain contact/about page
+   (``site_identity.verify_site``). Name similarity alone is never enough for
+   a guessed domain, because a guessed domain has no registry link backing it.
 
 2. Hiring signals from the verified site: careers pages, schema.org
    ``JobPosting`` objects and outbound links to recognised Norwegian
@@ -42,22 +43,35 @@ from .identity import apply_website_identity_gate
 from .quality import (
     QUALITY_VERSION,
     article_page_date,
+    careers_posting_links,
     group_members,
     is_comment_feed,
-    screen_social_links,
+    listing_article_links,
+    page_title,
+    posting_from_page,
     screen_ats_links,
     screen_careers_page,
     screen_job_posting,
     screen_news,
+    screen_social_links,
 )
+from .site_identity import verify_site
 from .website import (
     SAFE_OPENER,
     USER_AGENT,
     _registered_domain,
-    _robots_allowed,
     assert_public_url,
     fetch_website,
+    robots_check,
 )
+
+
+def _own_url(candidate: Any, fallback: str) -> str:
+    """A JobPosting's own ``url`` when it stays on the same site, otherwise the page it was read from."""
+    text = str(candidate or "").strip()
+    if text.startswith(("http://", "https://")) and _registered_domain(text) == _registered_domain(fallback):
+        return text
+    return fallback
 
 ENRICHMENT_VERSION = "signalpost-enrichment-v2"
 
@@ -103,6 +117,8 @@ MAX_EXTRA_PAGES = 3
 # article page itself must print its publication date. Feed entries carry their
 # own pubDate and are not re-fetched.
 MAX_ARTICLE_CHECKS = 6
+# Postings linked from the careers page that are opened to read title and deadline.
+MAX_POSTING_CHECKS = 3
 
 
 def _ascii_tokens(value: Any) -> list[str]:
@@ -178,7 +194,36 @@ def _distinct_orgnrs(text: str) -> set[str]:
     return found
 
 
+def _ascii_url(url: str) -> str:
+    """Percent-encode a link copied from a page ("/nyheter/ny-båt") so urllib can request it."""
+    parsed = urllib.parse.urlsplit(url)
+    host = parsed.hostname or ""
+    try:
+        host_ascii = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        host_ascii = host
+    netloc = host_ascii + (f":{parsed.port}" if parsed.port else "")
+    safe = "/:@!$&'()*+,;=%-._~"
+    return urllib.parse.urlunsplit((parsed.scheme, netloc, urllib.parse.quote(parsed.path, safe=safe), urllib.parse.quote(parsed.query, safe=safe + "?"), ""))
+
+
+def _decode(page: dict[str, Any]) -> str:
+    """Page text in its declared charset (HTTP header or <meta charset>), falling back to UTF-8 then cp1252."""
+    raw = page.get("raw") or b""
+    declared = re.search(r"charset=[\"']?([A-Za-z0-9_\-]+)", str(page.get("content_type") or ""))
+    if not declared:
+        declared = re.search(rb"<meta[^>]+charset=[\"']?([A-Za-z0-9_\-]+)", raw[:4096], re.IGNORECASE)
+    names = [declared.group(1).decode() if isinstance(declared.group(1), bytes) else declared.group(1)] if declared else []
+    for name in [*names, "utf-8"]:
+        try:
+            return raw.decode(name)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return raw.decode("cp1252", errors="replace")
+
+
 def _get(url: str, *, timeout: float = 8.0, max_bytes: int = 1_500_000) -> dict[str, Any]:
+    url = _ascii_url(url)
     assert_public_url(url)
     started = time.monotonic()
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/rss+xml,application/atom+xml,application/xml;q=0.9,*/*;q=0.5"})
@@ -197,18 +242,47 @@ def _get(url: str, *, timeout: float = 8.0, max_bytes: int = 1_500_000) -> dict[
     }
 
 
-def _proof_span(text: str, pattern: re.Pattern[str]) -> str | None:
-    match = pattern.search(text)
-    if not match:
-        return None
-    start = max(0, match.start() - 80)
-    return text[start : match.end() + 40].strip()
+def apply_strict_site_gate(profile: dict[str, Any], website: dict[str, Any], *, guessed: bool) -> dict[str, Any]:
+    """Second, stricter website gate (reviewer feedback 2026-11-13).
+
+    The name heuristic (``identity.assess_website_identity``) may only keep a
+    site that ``site_identity.verify_site`` also ties to this registry entry.
+    The organisation number printed on a same-domain sub-page is strong enough
+    on its own. A rejected site loses its social links, and nothing derived
+    from it is published.
+    """
+    if website.get("status") != "available":
+        return website
+    value = website.get("value") or {}
+    name_assessment = value.get("identity_assessment") or {}
+    strict = verify_site(profile, value, guessed=guessed)
+    # The org number, or the legal name with the registry address, ties the site on its own; a name-only
+    # match (registry-listed .no) must also pass the name heuristic.
+    ties_alone = strict["method"].startswith(("orgnr", "name_and_registry_address"))
+    if strict["publishable"] and (ties_alone or name_assessment.get("publishable")):
+        final = strict
+    else:
+        reasons = list(strict.get("reasons") or [])
+        if strict["publishable"]:
+            reasons = list(name_assessment.get("reasons") or []) or ["site could not be tied to this exact company"]
+        final = {**strict, "status": "related_or_uncertain", "publishable": False, "reasons": reasons}
+    final["name_heuristic"] = {key: name_assessment.get(key) for key in ("status", "score", "reasons")}
+    value["identity_assessment"] = final
+    if not final["publishable"]:
+        value["social_links"] = []
+        value["withheld_reason"] = final["reasons"][-1] if final.get("reasons") else "site could not be tied to this exact company"
+    website["value"] = value
+    return website
 
 
 def discover_website(profile: dict[str, Any], metrics: dict[str, Any], registry_url: str | None = None) -> dict[str, Any] | None:
-    """Return an exact-identity website evidence record for a guessed domain, or None."""
-    org = str(profile.get("organisation_number") or "")
-    pattern = orgnr_pattern(org)
+    """Return an exact-identity website evidence record for a registry or guessed domain, or None.
+
+    Each candidate is fetched once (homepage + up to two contact/about pages)
+    and must pass ``site_identity.verify_site``: the organisation number on
+    the site, or the legal name with the registry address. A guessed domain is
+    never published on the name alone.
+    """
     attempts: list[dict[str, Any]] = []
     registry_domain = _registered_domain(registry_url) if registry_url else None
     domains = ([registry_domain] if registry_domain else []) + [item for item in candidate_domains(profile.get("name")) if item != registry_domain]
@@ -218,93 +292,51 @@ def discover_website(profile: dict[str, Any], metrics: dict[str, Any], registry_
         attempts.append(attempt)
         if not host_ok:
             continue
-        page = None
+        record = None
         for url in (f"https://{domain}/", f"https://www.{domain}/", f"http://www.{domain}/"):
-            try:
-                if not _robots_allowed(url, 6.0):
-                    metrics["requests"] += 1
-                    attempt["result"] = "robots_disallow"
-                    break
-                metrics["requests"] += 2
-                page = _get(url)
+            record, site_metrics = fetch_website(url, timeout=8.0, max_pages=2)
+            metrics["requests"] += site_metrics["requests"]
+            metrics["bytes"] += site_metrics["bytes"]
+            metrics["latencies_ms"].extend(site_metrics["latencies_ms"])
+            if record.get("status") == "available" or record.get("status") == "blocked":
                 break
-            except Exception as exc:  # network, TLS, unresolvable apex: try the next spelling
-                attempt["result"] = f"fetch_error: {type(exc).__name__}"
+        if record is None or record.get("status") != "available":
+            attempt["result"] = "robots_disallow" if record and record.get("status") == "blocked" else "fetch_failed"
+            continue
+        final_domain = _registered_domain((record.get("value") or {}).get("final_url") or "")
+        if final_domain != domain:
+            # A brand's .no that forwards to its own .com is common; a guess that lands on a directory,
+            # marketplace or another company is not. Follow only when the new domain still names the company.
+            final_compact = re.sub(r"[^a-z0-9]", "", final_domain.rsplit(".", 1)[0])
+            distinctive = [token for token in _ascii_tokens(profile.get("name")) if token not in LEGAL_SUFFIXES and token not in GENERIC_TOKENS and len(token) > 2]
+            if not distinctive or not all(token in final_compact for token in distinctive):
+                attempt["result"] = "redirects_to_another_domain"
                 continue
-        if page is None:
-            continue
-        metrics["bytes"] += len(page["raw"])
-        metrics["latencies_ms"].append(page["elapsed_ms"])
-        if "html" not in page["content_type"].lower():
-            attempt["result"] = "not_html"
-            continue
-        html = page["raw"].decode("utf-8", errors="replace")
-        text = _visible_text(html)
-        proof_url, proof_text, proof_hash = page["url"], text, page["sha256"]
-        if not pattern.search(text):
-            # Look one hop deeper: a same-domain contact/about page often carries the org number.
-            soup = BeautifulSoup(html, "lxml")
-            contact = None
-            for anchor in soup.select("a[href]"):
-                href = urllib.parse.urljoin(page["url"], str(anchor.get("href") or ""))
-                path = (urllib.parse.urlparse(href).path + " " + anchor.get_text(" ", strip=True)).casefold()
-                if _registered_domain(href) == _registered_domain(page["url"]) and any(term in path for term in ("kontakt", "contact", "om-oss", "om oss", "about")):
-                    contact = href
-                    break
-            if contact:
-                try:
-                    metrics["requests"] += 1
-                    sub = _get(contact)
-                    metrics["bytes"] += len(sub["raw"])
-                    sub_text = _visible_text(sub["raw"].decode("utf-8", errors="replace"))
-                    if pattern.search(sub_text) and _registered_domain(sub["url"]) == _registered_domain(page["url"]):
-                        proof_url, proof_text, proof_hash = sub["url"], sub_text, sub["sha256"]
-                except Exception:
-                    pass
-        span = _proof_span(proof_text, pattern)
-        if not span:
-            attempt["result"] = "no_orgnr_proof"
-            continue
-        # A page that prints many different organisation numbers is a directory, portfolio or
-        # accountant client list, not the company's own site.
-        if len(_distinct_orgnrs(proof_text) - {org}) >= 2:
-            attempt["result"] = "multiple_orgnrs_directory_like"
-            continue
-        attempt["result"] = "exact_orgnr_proof"
-        record, site_metrics = fetch_website(page["url"])
-        metrics["requests"] += site_metrics["requests"]
-        metrics["bytes"] += site_metrics["bytes"]
-        metrics["latencies_ms"].extend(site_metrics["latencies_ms"])
-        if record.get("status") != "available":
-            attempt["result"] = "refetch_failed"
-            continue
-        record["source_type"] = "discovered_company_website"
-        record["source_class"] = "company_owned_discovered"
+            attempt["redirected"] = True
+        from_registry = domain == registry_domain
+        record["source_type"] = "registry_linked_company_website" if from_registry else "discovered_company_website"
+        record["source_class"] = "registry_linked_company_website" if from_registry else "company_owned_discovered"
         gated = apply_website_identity_gate(profile, record)["website"]
         value = gated.get("value") or {}
-        # The org-number proof is stronger than the name heuristic; record it explicitly.
-        value["identity_assessment"] = {
-            "status": "exact",
-            "score": 1.0,
-            "publishable": True,
-            "reasons": ["exact organisation number printed on the company site"],
-            "method": "orgnr_proof_on_guessed_domain_v1",
-            "proof": {"url": proof_url, "content_sha256": proof_hash, "claim_span": span},
-        }
-        # The name heuristic may have quarantined the site's social links; with org-number proof the
-        # site is exact, so re-apply only the per-link handle check.
+        strict = verify_site(profile, value, guessed=not from_registry)
+        attempt["result"] = strict["method"]
+        if not strict["publishable"]:
+            continue
+        if strict["method"] == "registry_no_domain_name_v1" and not (value.get("identity_assessment") or {}).get("publishable"):
+            attempt["result"] = "name_heuristic_rejected"
+            continue
+        strict["name_heuristic"] = {key: (value.get("identity_assessment") or {}).get(key) for key in ("status", "score", "reasons")}
+        value["identity_assessment"] = strict
+        # The name heuristic may have quarantined the site's social links; with the site tied to the
+        # registry entry, re-apply only the per-link handle check.
         value["social_links"] = [
             {"platform": item["platform"], "url": item["url"]}
             for item in value.get("social_link_assessments") or []
             if item.get("publishable")
         ]
-        from_registry = domain == registry_domain
-        value["discovery"] = {"method": "registry_url_orgnr_proof_v1" if from_registry else "legal_name_domain_guess_v1", "attempts": attempts}
-        if from_registry:
-            record["source_type"] = "registry_linked_company_website"
-            record["source_class"] = "registry_linked_company_website"
+        value["discovery"] = {"method": "registry_url_strict_identity_v3" if from_registry else "legal_name_domain_guess_v3", "attempts": attempts}
         gated["value"] = value
-        gated["note"] = "Website discovered by legal-name domain guess; published only after exact org-number proof on the site"
+        gated["note"] = "Website published only after the site itself tied it to this registry entry: " + strict["reasons"][0]
         return gated
     profile.setdefault("enrichment_trace", {})["website_discovery"] = attempts
     return None
@@ -319,7 +351,8 @@ def _same_site_links(base_url: str, soup: BeautifulSoup, terms: tuple[str, ...],
         if parsed.scheme not in {"http", "https"} or _registered_domain(href) != base_domain:
             continue
         haystack = (parsed.path + " " + anchor.get_text(" ", strip=True)).casefold()
-        rank = next((index for index, term in enumerate(terms) if term in haystack), None)
+        # Terms must start a word or path segment: "stillinger" inside "/bestillinger" is a booking page.
+        rank = next((index for index, term in enumerate(terms) if re.search(r"(?<![a-z0-9æøå])" + re.escape(term), haystack)), None)
         if rank is None:
             continue
         clean = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", "", "", ""))
@@ -459,7 +492,7 @@ def enrich_from_site(profile: dict[str, Any], website: dict[str, Any], metrics: 
             "hiring": evidence("hiring", "source_error", "company_owned_site", base_url, note=note),
             "public_activity": evidence("public_activity", "source_error", "company_owned_site", base_url, note=note),
         }
-    html = home["raw"].decode("utf-8", errors="replace")
+    html = _decode(home)
     soup = BeautifulSoup(html, "lxml")
     pages_read = [{"url": home["url"], "content_sha256": home["sha256"], "retrieved_at": home["retrieved_at"]}]
 
@@ -485,15 +518,18 @@ def enrich_from_site(profile: dict[str, Any], website: dict[str, Any], metrics: 
     career_page = None
     career_check: dict[str, Any] = {}
     news_listing_pages: list[str] = []
+    posting_links: list[dict[str, str]] = []
+    posting_withheld: list[dict[str, Any]] = []
     for page_url in careers + news + feeds[:1]:
         if extra >= MAX_EXTRA_PAGES:
             break
         try:
-            if not _robots_allowed(page_url, 6.0):
-                metrics["requests"] += 1
+            allowed, robots_requests = robots_check(page_url, 6.0)
+            metrics["requests"] += robots_requests
+            if not allowed:
                 continue
             page = _get(page_url)
-            metrics["requests"] += 2
+            metrics["requests"] += 1
             metrics["bytes"] += len(page["raw"])
             metrics["latencies_ms"].append(page["elapsed_ms"])
         except Exception:
@@ -502,7 +538,7 @@ def enrich_from_site(profile: dict[str, Any], website: dict[str, Any], metrics: 
         if _registered_domain(page["url"]) != _registered_domain(home["url"]):
             continue
         pages_read.append({"url": page["url"], "content_sha256": page["sha256"], "retrieved_at": page["retrieved_at"]})
-        body = page["raw"].decode("utf-8", errors="replace")
+        body = _decode(page)
         if page_url in feeds:
             for item in _parse_feed(page["raw"], page["url"]):
                 item["method"] = "company_rss_feed"
@@ -515,22 +551,70 @@ def enrich_from_site(profile: dict[str, Any], website: dict[str, Any], metrics: 
             career_check = {"body_text": _visible_text(body), "has_password_field": bool(page_soup.select('input[type="password"]'))}
             ats.extend(_ats_links(page["url"], page_soup))
             for obj in _walk_types(_structured(body, page["url"]), {"JobPosting"}):
-                jobs.append({"title": str(obj.get("title") or "")[:300], "posted": _iso_date(obj.get("datePosted")), "valid_through": _iso_date(obj.get("validThrough")), "url": page["url"], "method": "schema_org_jobposting"})
+                jobs.append({"title": str(obj.get("title") or "")[:300], "posted": _iso_date(obj.get("datePosted")), "valid_through": _iso_date(obj.get("validThrough")), "url": _own_url(obj.get("url"), page["url"]), "method": "schema_org_jobposting"})
+            posting_links.extend(careers_posting_links(page["url"], body, site_url=home["url"]))
         if page_url in news:
             news_listing_pages.append(page["url"])
             for item in _page_dated_items(body, page["url"]):
                 item["source_url"] = page["url"]
                 activity.append(item)
+            # Links to individual articles; each must print its own date when opened.
+            for item in listing_article_links(page["url"], body, site_url=home["url"], limit=MAX_ARTICLE_CHECKS):
+                item["source_url"] = page["url"]
+                activity.append(item)
+
+    # Individual postings linked from the careers page: published only with a title and an open deadline
+    # (or a recent posting date) printed on the posting page itself.
+    posting_checks = 0
+    for link in posting_links:
+        if posting_checks >= MAX_POSTING_CHECKS or any(job.get("url") == link["url"] for job in jobs):
+            continue
+        posting_checks += 1
+        try:
+            allowed, robots_requests = robots_check(link["url"], 6.0)
+            metrics["requests"] += robots_requests
+            if not allowed:
+                posting_withheld.append({"url": link["url"], "kind": "job_posting", "reason": "posting page disallowed by robots.txt"})
+                continue
+            page = _get(link["url"])
+            metrics["requests"] += 1
+            metrics["bytes"] += len(page["raw"])
+            metrics["latencies_ms"].append(page["elapsed_ms"])
+        except Exception as exc:
+            posting_withheld.append({"url": link["url"], "kind": "job_posting", "reason": f"posting page could not be opened ({type(exc).__name__})"})
+            continue
+        if _registered_domain(page["url"]) != _registered_domain(home["url"]):
+            posting_withheld.append({"url": link["url"], "kind": "job_posting", "reason": "posting redirects off the company's own site"})
+            continue
+        job, reason = posting_from_page(_decode(page), page["url"])
+        if job is None:
+            posting_withheld.append({"url": link["url"], "kind": "job_posting", "reason": reason})
+            continue
+        job["content_sha256"] = page["sha256"]
+        job["retrieved_at"] = page["retrieved_at"]
+        jobs.append(job)
+        pages_read.append({"url": page["url"], "content_sha256": page["sha256"], "retrieved_at": page["retrieved_at"]})
 
     ats = list({item["url"]: item for item in ats}.values())
-    activity = list({(item["title"], item["published"]): item for item in activity}.values())
-    activity.sort(key=lambda item: item["published"], reverse=True)
+    dated_urls = {item.get("url") for item in activity if item.get("published")}
+    deduped: dict[Any, dict[str, Any]] = {}
+    for item in activity:
+        if not item.get("published") and item.get("url") in dated_urls:
+            continue
+        key = (item["title"], item["published"]) if item.get("published") else ("url", item.get("url"))
+        deduped.setdefault(key, item)
+    activity = list(deduped.values())
+    # Dated items first (newest first), then undated listing links in page order.
+    activity.sort(key=lambda item: (bool(item.get("published")), item.get("published") or ""), reverse=True)
     # Publication gates (reviewer feedback 2026-11-01): a wrong match is worse than a blank.
     activity, news_withheld = screen_news(activity, site_url=home["url"], read_from=[home["url"], *news_listing_pages])
     activity, verify_withheld = verify_article_pages(activity, home["url"], metrics)
     news_withheld += verify_withheld
+    # Re-screen with the dates and headlines the article pages printed themselves.
+    activity, rescreen_withheld = screen_news(activity, site_url=home["url"], read_from=[home["url"], *news_listing_pages])
+    news_withheld += rescreen_withheld
     ats, ats_withheld = screen_ats_links(ats)
-    jobs_withheld: list[dict[str, Any]] = []
+    jobs_withheld: list[dict[str, Any]] = list(posting_withheld)
     kept_jobs: list[dict[str, Any]] = []
     for job in jobs:
         reason = screen_job_posting(job)
@@ -629,12 +713,13 @@ def verify_article_pages(items: list[dict[str, Any]], site_url: str, metrics: di
             continue
         checks += 1
         try:
-            if not _robots_allowed(item["url"], 6.0):
-                metrics["requests"] += 1
+            allowed, robots_requests = robots_check(item["url"], 6.0)
+            metrics["requests"] += robots_requests
+            if not allowed:
                 withheld.append({"title": item.get("title"), "url": item.get("url"), "published": item.get("published"), "reason": "article page disallowed by robots.txt"})
                 continue
             page = _get(item["url"])
-            metrics["requests"] += 2
+            metrics["requests"] += 1
             metrics["bytes"] += len(page["raw"])
             metrics["latencies_ms"].append(page["elapsed_ms"])
         except Exception as exc:
@@ -643,10 +728,15 @@ def verify_article_pages(items: list[dict[str, Any]], site_url: str, metrics: di
         if _registered_domain(page["url"]) != _registered_domain(site_url):
             withheld.append({"title": item.get("title"), "url": item.get("url"), "published": item.get("published"), "reason": "article redirects off the company's own site"})
             continue
-        page_date, reason = article_page_date(page["raw"].decode("utf-8", errors="replace"))
+        page_html = _decode(page)
+        page_date, reason = article_page_date(page_html)
         if not page_date:
             withheld.append({"title": item.get("title"), "url": item.get("url"), "published": item.get("published"), "reason": reason})
             continue
-        kept.append({**item, "published": page_date, "page_verified": True, "content_sha256": page["sha256"]})
+        title = item.get("title")
+        if item.get("method") == "listing_link":
+            # The article's own headline beats the anchor text it was linked with.
+            title = page_title(page_html) or title
+        kept.append({**item, "title": title, "published": page_date, "page_verified": True, "content_sha256": page["sha256"], "url": page["url"]})
     kept.sort(key=lambda item: item["published"], reverse=True)
     return kept, withheld

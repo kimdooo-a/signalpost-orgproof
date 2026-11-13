@@ -74,8 +74,11 @@ def build_claims(profile: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
         }
         if state != "available":
             row["reason"] = reason or record.get("note") or None
-            if candidate is not None:
-                # What was considered and why it was left blank; never a published value.
+            # What was considered and why it was left blank; never a published value, and never a URL
+            # the run did not publish (a rejected candidate URL reads as a claim about the company).
+            if isinstance(candidate, dict):
+                candidate = {key: item for key, item in candidate.items() if item and key not in {"url", "title"}}
+            if candidate:
                 row["withheld_candidate"] = candidate
         claims.append(row)
 

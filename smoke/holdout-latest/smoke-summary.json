@@ -1,42 +1,48 @@
 {
-  "run_id": "smoke-20261101T234317Z",
+  "run_id": "smoke-20261113T215929Z",
   "envelopes": 200,
   "expected": 200,
   "validation_passed": true,
-  "minutes": 4.43,
-  "requests": 1813,
+  "minutes": 4.77,
+  "requests": 1782,
   "third_party_cost_usd": 0.0,
   "within_budget": true,
   "published": {
-    "websites": 19,
-    "social_profiles": 19,
-    "companies_with_news": 4,
-    "news_items": 27,
-    "companies_with_jobs": 2,
-    "job_items": 2
+    "websites": 23,
+    "social_profiles": 21,
+    "companies_with_news": 8,
+    "news_items": 62,
+    "companies_with_jobs": 3,
+    "job_items": 4
   },
   "withheld": {
     "website": {
-      "registry-linked URL lacks strong exact-entity identity evidence": 14,
-      "partial legal-name overlap only": 2
+      "site does not carry the legal name or the organisation number": 8,
+      "site prints a different organisation number as its own": 6,
+      "non-Norwegian domain (.net) without the organisation number or registry address": 1,
+      "non-Norwegian domain (.com) without the organisation number or registry address": 1
     },
     "social": {
-      "handle does not carry the legal name": 6
+      "handle does not carry the legal name": 12
     },
     "news": {
+      "article page could not be opened (HTTPError)": 5,
       "item points at the homepage, not an article": 2,
-      "date belongs to a listing or static page, not an article": 2
+      "date belongs to a listing or static page, not an article": 2,
+      "page has no date": 2
     },
-    "jobs": {}
+    "jobs": {
+      "posting closed on 2026-03-06": 1
+    }
   },
   "confidence": {
-    "high": 188,
-    "medium": 12
+    "high": 191,
+    "medium": 9
   },
   "claim_states": {
-    "available": 3430,
-    "not_available": 888,
-    "ambiguous": 26,
+    "available": 3471,
+    "not_available": 879,
+    "ambiguous": 40,
     "failed": 6,
     "blocked": 1
   },
@@ -45,46 +51,62 @@
     "shared_social_urls": 0,
     "social_links_withheld": 0,
     "shared_websites": 0,
-    "websites_withheld": 0
+    "websites_withheld": 0,
+    "website_decisions": {
+      "published:name_and_registry_address_v1": 11,
+      "published:orgnr_on_site_v3": 12,
+      "withheld:foreign_tld_v1": 2,
+      "withheld:name_missing_v1": 8,
+      "withheld:no_site": 161,
+      "withheld:other_orgnr_v1": 6
+    },
+    "rejected_discovery_candidates": {
+      "fetch_failed": 22,
+      "foreign_tld_v1": 16,
+      "guessed_name_only_v1": 14,
+      "name_missing_v1": 39,
+      "no_dns": 371,
+      "other_orgnr_v1": 7,
+      "parked_page_v1": 6,
+      "redirects_to_another_domain": 8,
+      "robots_disallow": 11
+    }
   },
-  "compared_with": "smoke/holdout-v2/envelopes.jsonl",
+  "compared_with": "out/holdout-before/envelopes.jsonl",
   "change": {
     "website": {
-      "before": 19,
-      "after": 19,
+      "before": 18,
+      "after": 23,
       "removed": 1,
-      "added": 1,
+      "added": 6,
       "removed_examples": [
-        "894729252 https://sjor.no/"
+        "992528389 https://www.spinno.net/"
       ]
     },
     "social": {
       "before": 19,
-      "after": 19,
-      "removed": 0,
-      "added": 0,
-      "removed_examples": []
+      "after": 21,
+      "removed": 3,
+      "added": 5,
+      "removed_examples": [
+        "992528389 https://facebook.com/Spinno",
+        "992528389 https://instagram.com/spinno8",
+        "998177014 https://instagram.com/finstad_stillas"
+      ]
     },
     "news": {
-      "before": 31,
-      "after": 27,
-      "removed": 4,
-      "added": 0,
-      "removed_examples": [
-        "915285988 https://ramlos.no/",
-        "937018967 https://status-as.no/",
-        "937018967 https://status-as.no/aktuelt/",
-        "970903828 https://www.dekkpartner.no/artikler"
-      ]
+      "before": 27,
+      "after": 62,
+      "removed": 0,
+      "added": 35,
+      "removed_examples": []
     },
     "jobs": {
-      "before": 3,
-      "after": 2,
-      "removed": 1,
-      "added": 0,
-      "removed_examples": [
-        "980527476 https://www.linkrekruttering.no/rekruttering/"
-      ]
+      "before": 2,
+      "after": 4,
+      "removed": 0,
+      "added": 2,
+      "removed_examples": []
     }
   }
 }

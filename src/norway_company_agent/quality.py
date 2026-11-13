@@ -74,19 +74,24 @@ def _today(today: date | None) -> date:
     return today or datetime.now(UTC).date()
 
 
-def screen_news_item(item: dict[str, Any], *, site_url: str, read_from: Iterable[str] = (), today: date | None = None) -> str | None:
-    """Return None when the item is a dated article about the company, otherwise a one-line reason."""
+def screen_news_item(item: dict[str, Any], *, site_url: str, read_from: Iterable[str] = (), today: date | None = None, require_date: bool = True) -> str | None:
+    """Return None when the item is a dated article about the company, otherwise a one-line reason.
+
+    ``require_date=False`` pre-screens a link read off a listing page before
+    its article page is opened; the date check then runs on the article page.
+    """
     published = str(item.get("published") or "").strip()
-    if not published:
+    if not published and require_date:
         return "page has no date"
-    try:
-        when = date.fromisoformat(published[:10])
-    except ValueError:
-        return "date could not be read"
-    if when > _today(today):
-        return "date is in the future"
-    if when < EARLIEST_PLAUSIBLE:
-        return "date is implausibly old"
+    if published:
+        try:
+            when = date.fromisoformat(published[:10])
+        except ValueError:
+            return "date could not be read"
+        if when > _today(today):
+            return "date is in the future"
+        if when < EARLIEST_PLAUSIBLE:
+            return "date is implausibly old"
     title = norm_text(item.get("title"))
     if not title:
         return "item has no title"
@@ -118,7 +123,7 @@ def screen_news(items: list[dict[str, Any]], *, site_url: str, read_from: Iterab
     kept: list[dict[str, Any]] = []
     withheld: list[dict[str, Any]] = []
     for item in items:
-        reason = screen_news_item(item, site_url=site_url, read_from=read_from, today=today)
+        reason = screen_news_item(item, site_url=site_url, read_from=read_from, today=today, require_date=item.get("method") != "listing_link")
         if reason:
             withheld.append({"title": str(item.get("title") or "")[:200], "url": item.get("url"), "published": item.get("published"), "reason": reason})
         else:
@@ -167,15 +172,172 @@ def article_page_date(html: str) -> tuple[str | None, str | None]:
             walk(json.loads(script.string or script.get_text() or "null"))
         except (ValueError, TypeError):
             continue
-    for node in soup.select("article time[datetime], main time[datetime], time[datetime][itemprop], time[datetime].published, time[datetime].entry-date"):
+    for node in soup.select(
+        "article time[datetime], main time[datetime], time[datetime][itemprop], time[datetime].published, time[datetime].entry-date, "
+        ".entry-meta time[datetime], .post-meta time[datetime], .post-date time[datetime], header time[datetime]"
+    ):
         found.append(str(node.get("datetime") or ""))
     for raw in found:
         match = re.match(r"\s*(\d{4})-(\d{2})-(\d{2})", raw)
         if match:
             return "-".join(match.groups()), None
+    # A labelled date printed in the article text ("Publisert 12.10.2026", "Published: 3 March 2026").
+    for node in soup(["script", "style", "noscript", "nav", "footer"]):
+        node.decompose()
+    container = soup.select_one("article") or soup.select_one("main") or soup.body or soup
+    text = container.get_text(" ", strip=True)[:6000]
+    labelled = re.search(r"(?<![a-zæøå])(?:publisert|published|posted on|posted|dato)\s*[:\-]?\s*(?:den\s+)?(.{6,24})", text, re.IGNORECASE)
+    if labelled:
+        parsed = parse_text_date(labelled.group(1))
+        if parsed:
+            return parsed, None
     if og_type == "website":
         return None, "static page, not an article (page has no date)"
     return None, "page has no date"
+
+
+MONTHS = {
+    "januar": 1, "january": 1, "jan": 1, "februar": 2, "february": 2, "feb": 2, "mars": 3, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "mai": 5, "may": 5, "juni": 6, "june": 6, "jun": 6, "juli": 7, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9, "oktober": 10, "october": 10, "okt": 10, "oct": 10,
+    "november": 11, "nov": 11, "desember": 12, "december": 12, "des": 12, "dec": 12,
+}
+
+
+def parse_text_date(text: str) -> str | None:
+    """ISO date from the start of ``text``: 12.10.2026, 12/10/2026, 2026-10-12, 12. oktober 2026, 3 March 2026."""
+    text = str(text or "").strip()
+    match = re.match(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if match:
+        candidate = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    else:
+        match = re.match(r"(\d{1,2})[./](\d{1,2})[./](\d{4})(?!\d)", text)
+        if match:
+            candidate = (int(match.group(3)), int(match.group(2)), int(match.group(1)))
+        else:
+            match = re.match(r"(\d{1,2})\.?\s+([A-Za-zæøåÆØÅ]+)\.?\s+(\d{4})(?!\d)", text)
+            if not match or match.group(2).casefold() not in MONTHS:
+                return None
+            candidate = (int(match.group(3)), MONTHS[match.group(2).casefold()], int(match.group(1)))
+    try:
+        return date(*candidate).isoformat()
+    except ValueError:
+        return None
+
+
+def page_title(html: str) -> str:
+    """Headline of an article or posting page: og:title, else the first h1, else <title>."""
+    soup = BeautifulSoup(html or "", "lxml")
+    og = soup.select_one('meta[property="og:title"][content]')
+    for value in (str(og.get("content") or "") if og else "", soup.h1.get_text(" ", strip=True) if soup.h1 else "", soup.title.get_text(" ", strip=True) if soup.title else ""):
+        value = re.sub(r"\s+", " ", value).strip()
+        if value:
+            return value[:300]
+    return ""
+
+
+NEWS_SEGMENTS = {"nyheter", "nyhet", "aktuelt", "news", "presse", "press", "pressemeldinger", "blogg", "blog", "artikler", "artikkel", "articles", "article", "innlegg", "posts", "post"}
+CAREER_SEGMENTS = {"karriere", "ledige-stillinger", "ledige_stillinger", "ledigestillinger", "stillinger", "stilling", "jobb", "jobber", "jobs", "job", "career", "careers", "vacancies", "vacancy", "positions"}
+GENERIC_ANCHORS = {"les mer", "les mer her", "read more", "mer", "more", "se mer", "les hele saken", "les artikkelen", "neste", "forrige", "next", "previous", "eldre innlegg", "nyere innlegg", "se alle", "alle nyheter", "vis alle", "sok her", "sok", "apply", "sok na", "soknad"}
+
+
+def _deeper_links(listing_url: str, html: str, *, site_url: str, segments: set[str], limit: int) -> list[dict[str, str]]:
+    """Same-site links that sit under the listing page's path, or under a news/careers segment."""
+    soup = BeautifulSoup(html or "", "lxml")
+    listing_path = _clean_path(listing_url)
+    site_domain = registered_domain(site_url)
+    found: dict[str, dict[str, str]] = {}
+    for anchor in soup.select("a[href]"):
+        href = urllib.parse.urljoin(listing_url, str(anchor.get("href") or "").strip())
+        parsed = urllib.parse.urlparse(href)
+        if parsed.scheme not in {"http", "https"} or registered_domain(href) != site_domain:
+            continue
+        path = _clean_path(href)
+        parts = [part.casefold() for part in path.split("/") if part]
+        under_listing = listing_path != "/" and path.startswith(listing_path + "/")
+        under_segment = len(parts) >= 2 and parts[0] in segments
+        if not (under_listing or under_segment):
+            continue
+        if re.search(r"(?:^|/)(?:page|side|category|kategori|tag|author|forfatter|feed|wp-json|login|wp-admin)(?:/|$)", path, re.IGNORECASE):
+            continue
+        if re.search(r"\.(?:pdf|jpe?g|png|gif|webp|svg|docx?|xlsx?|zip)$", path, re.IGNORECASE):
+            continue
+        text = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True))
+        clean = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+        current = found.get(clean)
+        if norm_text(text) in GENERIC_ANCHORS:
+            text = ""
+        if current is None or len(text) > len(current["anchor_text"]):
+            found[clean] = {"url": clean, "anchor_text": text[:300]}
+    return list(found.values())[:limit]
+
+
+def listing_article_links(listing_url: str, html: str, *, site_url: str, limit: int = 6) -> list[dict[str, Any]]:
+    """Article candidates read off a news listing page; each must later prove its own date."""
+    return [
+        {"title": link["anchor_text"], "url": link["url"], "published": None, "method": "listing_link"}
+        for link in _deeper_links(listing_url, html, site_url=site_url, segments=NEWS_SEGMENTS, limit=limit * 3)
+        if len(link["anchor_text"]) >= 12 or not link["anchor_text"]
+    ][:limit]
+
+
+def careers_posting_links(careers_url: str, html: str, *, site_url: str, limit: int = 4) -> list[dict[str, str]]:
+    return _deeper_links(careers_url, html, site_url=site_url, segments=CAREER_SEGMENTS, limit=limit)
+
+
+DEADLINE = re.compile(r"(?<![a-zæøå])(?:s[øo]knadsfrist|frist for s[øo]knad|application deadline|apply by|deadline|frist)\s*[:\-]?\s*(?:er\s+)?(?:den\s+)?(.{6,24})", re.IGNORECASE)
+POSTING_MAX_AGE_DAYS = 180
+
+
+def posting_from_page(html: str, url: str, *, today: date | None = None) -> tuple[dict[str, Any] | None, str | None]:
+    """An open job posting printed by its own page, or the reason it is withheld.
+
+    Needs a title and a date: a schema.org JobPosting (``validThrough`` not
+    passed, or ``datePosted`` within 180 days when no deadline is given) or a
+    printed application deadline ("Søknadsfrist 01.12.2026") that has not
+    passed. "Snarest" / rolling deadlines carry no date and are withheld.
+    """
+    soup = BeautifulSoup(html or "", "lxml")
+    postings: list[dict[str, Any]] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            kind = value.get("@type")
+            kinds = {str(item) for item in (kind if isinstance(kind, list) else [kind]) if item}
+            if "JobPosting" in kinds:
+                postings.append(value)
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    for script in soup.select('script[type="application/ld+json"]'):
+        try:
+            walk(json.loads(script.string or script.get_text() or "null"))
+        except (ValueError, TypeError):
+            continue
+    current = _today(today)
+    if postings:
+        obj = postings[0]
+        job = {
+            "title": str(obj.get("title") or "").strip()[:300] or page_title(html),
+            "posted": (re.match(r"\d{4}-\d{2}-\d{2}", str(obj.get("datePosted") or "")) or [None])[0],
+            "valid_through": (re.match(r"\d{4}-\d{2}-\d{2}", str(obj.get("validThrough") or "")) or [None])[0],
+            "url": url,
+            "method": "posting_page_schema_org",
+        }
+    else:
+        for node in soup(["script", "style", "noscript", "nav", "footer"]):
+            node.decompose()
+        text = (soup.select_one("main") or soup.select_one("article") or soup.body or soup).get_text(" ", strip=True)[:8000]
+        match = DEADLINE.search(text)
+        deadline = parse_text_date(match.group(1)) if match else None
+        job = {"title": page_title(html), "posted": None, "valid_through": deadline, "url": url, "method": "posting_page_deadline"}
+    reason = screen_job_posting(job, today=current)
+    if reason:
+        return None, reason
+    return job, None
 
 
 def is_comment_feed(url: str, title: str = "") -> bool:
@@ -260,7 +422,7 @@ def screen_careers_page(page: dict[str, Any] | None, *, site_url: str, body_text
     if has_password_field or LOGIN_PATH.search(path):
         return "login-only page, not a public careers page"
     haystack = norm_text(f"{path} {page.get('title') or ''}")
-    if not any(term in haystack for term in ("karriere", "stilling", "jobb", "career", "jobs", "join", "work with")):
+    if not any(re.search(r"\b" + term, haystack) for term in ("karriere", "stilling", "jobb", "career", "jobs", "join", "work with")):
         body = norm_text(body_text[:20000])
         if not any(phrase in body for phrase in CAREER_BODY_PHRASES):
             return "page is not about this company's own vacancies"
@@ -275,8 +437,20 @@ def screen_job_posting(job: dict[str, Any], *, today: date | None = None) -> str
         try:
             if date.fromisoformat(str(valid)[:10]) < _today(today):
                 return f"posting closed on {str(valid)[:10]}"
+            return None
         except ValueError:
-            pass
+            return "deadline could not be read"
+    posted = job.get("posted")
+    if not posted:
+        return "posting has no date or deadline"
+    try:
+        age = (_today(today) - date.fromisoformat(str(posted)[:10])).days
+    except ValueError:
+        return "posting date could not be read"
+    if age < 0:
+        return "posting date is in the future"
+    if age > POSTING_MAX_AGE_DAYS:
+        return f"posted {str(posted)[:10]} with no deadline; may be closed"
     return None
 
 
@@ -399,6 +573,7 @@ def shared_across_companies(published: dict[str, list[str]]) -> dict[str, list[s
 
 REGISTRY_CONFIDENCE = 0.99
 SITE_ORGNR_CONFIDENCE = 0.97
+SITE_ADDRESS_CONFIDENCE = 0.92
 SITE_NAME_CONFIDENCE = 0.85
 
 
@@ -407,8 +582,10 @@ def site_confidence(website_value: dict[str, Any]) -> float | None:
     if not assessment.get("publishable"):
         return None
     reasons = " ".join(assessment.get("reasons") or []).casefold()
-    if float(assessment.get("score") or 0) >= 1.0 or "organisation number" in reasons:
+    if float(assessment.get("score") or 0) >= 1.0 or ("organisation number" in reasons and "different organisation number" not in reasons):
         return SITE_ORGNR_CONFIDENCE
+    if str(assessment.get("method") or "").startswith("name_and_registry_address"):
+        return SITE_ADDRESS_CONFIDENCE
     return SITE_NAME_CONFIDENCE
 
 
@@ -469,3 +646,81 @@ def apply_batch_consistency(profiles: list[dict[str, Any]]) -> dict[str, Any]:
                     record.setdefault("value", {})["withheld_by_site"] = True
             withheld_sites += 1
     return {"shared_social_urls": len(shared_socials), "social_links_withheld": withheld_socials, "shared_websites": len(shared_sites), "websites_withheld": withheld_sites}
+
+
+# --------------------------------------------------------------------------- redaction
+
+def _strip_urls(items: list[Any] | None, keep: tuple[str, ...] = ("platform", "kind", "reason")) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in items or []:
+        if isinstance(item, dict):
+            out.append({key: item[key] for key in keep if item.get(key) is not None})
+    return out
+
+
+def redact_unpublished(profile: dict[str, Any]) -> dict[str, Any]:
+    """Remove every URL the run did not publish from the output profile (reviewer feedback 2026-11-13).
+
+    The official run's checker read candidate domains out of the discovery
+    trace (``isabellacafe.com``, ``abho.com``) as claims about the company. A
+    rejected candidate is therefore kept only as a reason and a count, never
+    as a URL. Published claims are unaffected.
+    """
+    records = profile.get("evidence") or {}
+    website = records.get("website") or {}
+    value = website.get("value") or {}
+    assessment = value.get("identity_assessment") or {}
+    publishable = website.get("status") == "available" and bool(assessment.get("publishable"))
+    # Full visible page text is only needed to decide the tie; the proof span stays in the assessment.
+    value.pop("site_text", None)
+    for page in value.get("pages") or []:
+        if isinstance(page, dict):
+            page.pop("site_text", None)
+    if website and not publishable:
+        reasons = [str(reason) for reason in assessment.get("reasons") or []]
+        website["value"] = {
+            "identity_assessment": {key: assessment.get(key) for key in ("status", "score", "publishable", "method") if key in assessment} | {"reasons": reasons},
+            "withheld_reason": value.get("withheld_reason") or (reasons[-1] if reasons else None),
+        } if value else None
+        if website.get("status") == "available":
+            website["note"] = "Left blank: " + str((website.get("value") or {}).get("withheld_reason") or "site could not be tied to this exact company")
+        website["source_url"] = ""
+        website["content_sha256"] = None
+        for key in ("hiring", "public_activity"):
+            record = records.get(key)
+            if isinstance(record, dict):
+                record["source_url"] = ""
+                if isinstance(record.get("value"), dict):
+                    record["value"] = {"withheld": _strip_urls(record["value"].get("withheld"))}
+    elif publishable:
+        value["social_withheld"] = _strip_urls(value.get("social_withheld"))
+        published = {item.get("url") for item in value.get("social_links") or []}
+        value["discovered_social_links"] = [item for item in value.get("discovered_social_links") or [] if item.get("url") in published]
+        value["social_link_assessments"] = [item for item in value.get("social_link_assessments") or [] if item.get("url") in published]
+        candidate = value.get("registry_listed_candidate")
+        if isinstance(candidate, dict):
+            value["registry_listed_candidate"] = {"identity_assessment": {key: (candidate.get("identity_assessment") or {}).get(key) for key in ("status", "reasons")}}
+        discovery = value.get("discovery")
+        if isinstance(discovery, dict):
+            discovery["attempts"] = _redact_attempts(discovery.get("attempts"), value.get("registered_domain") or registered_domain(value.get("final_url") or ""))
+        for key in ("hiring", "public_activity"):
+            record = records.get(key)
+            if isinstance(record, dict) and isinstance(record.get("value"), dict):
+                record["value"]["withheld"] = _strip_urls(record["value"].get("withheld"))
+    trace = profile.get("enrichment_trace")
+    if isinstance(trace, dict) and "website_discovery" in trace:
+        trace["website_discovery"] = _redact_attempts(trace.get("website_discovery"), None)
+    return profile
+
+
+def _redact_attempts(attempts: list[Any] | None, published_domain: str | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for index, attempt in enumerate(attempts or [], 1):
+        if not isinstance(attempt, dict):
+            continue
+        domain = str(attempt.get("domain") or "")
+        row: dict[str, Any] = {"candidate": index, "tld": domain.rsplit(".", 1)[-1] if "." in domain else None, "dns": attempt.get("dns"), "result": attempt.get("result")}
+        if published_domain and domain == published_domain:
+            row["domain"] = domain
+        out.append(row)
+    return out

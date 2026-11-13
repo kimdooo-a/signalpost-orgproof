@@ -60,3 +60,26 @@ Published matches, before → after:
 
 Confidence: 100 smoke — high 98, medium 2. 200 holdout — high 188, medium 12.
 Every non-available claim has `value: null`; withheld candidates carry `reason` and `withheld_candidate`.
+
+---
+
+# Rerun with the strict website tie — 2026-11-14 (`smoke/latest/`, `smoke/holdout-latest/`)
+
+Changes since 2026-11-02: strict website-to-registry tie, parking-page rejection, no unpublished candidate URL in the output, article links opened from news listings, postings opened from careers pages (see README, item 5).
+"Before" is the previous commit run the same day on the same batches, so both columns see the same live web.
+
+| Run | Envelopes | Validation | Wall time | Requests (before → after) | Cost |
+|---|---:|---|---:|---:|---:|
+| 100-company smoke | 100/100 | passed | 2.8 min | 828 → 824 | USD 0.00 |
+| 200-company holdout | 200/200 | passed | 4.8 min | 1,828 → 1,782 | USD 0.00 |
+
+| Matches | 100 smoke (before → after) | 200 holdout (before → after) |
+|---|---|---|
+| Websites | 4 → 7 (+3: name + registry address on the site) | 18 → 23 (+6, −1: a `.net` site with neither org number nor registry address) |
+| Social profiles | 3 → 4 | 19 → 21 |
+| News items | 24 → 29 | 27 → 62 (article pages opened from news listings, each with its own printed date) |
+| Jobs | 0 → 0 | 2 → 4 (careers pages; no posting with an open deadline was found) |
+| Unpublished domains mentioned anywhere in the envelopes | 325 → 1 | 844 → 7 |
+
+The remaining mentions are the published company's own pages (a `.no` that forwards to its `.com`, its own TikTok link withheld as a social profile, …), not candidates for other companies.
+Website decisions and rejected discovery candidates by reason: `report.json` → `publication_gates.website_decisions` / `rejected_discovery_candidates`.

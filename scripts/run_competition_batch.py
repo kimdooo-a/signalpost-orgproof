@@ -2,24 +2,35 @@
 from __future__ import annotations
 
 import argparse
-import os
-import time
 import json
+import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from norway_company_agent.batch import profile_complete_for_modules, profiles_from_bulk, read_organisation_inputs, terminal_envelope, validate_envelopes  # noqa: E402
-from norway_company_agent.evidence import utc_now  # noqa: E402
-from norway_company_agent.identity import apply_website_identity_gate  # noqa: E402
-from norway_company_agent.official import fetch_official_modules  # noqa: E402
-from norway_company_agent.website import fetch_website  # noqa: E402
-from norway_company_agent.enrichment import discover_website, enrich_from_site, gate_social_links  # noqa: E402
-from norway_company_agent.quality import apply_batch_consistency  # noqa: E402
-from norway_company_agent.synthesis import build_claims, build_summary  # noqa: E402
+from norway_company_agent.batch import (
+    profile_complete_for_modules,
+    profiles_from_bulk,
+    read_organisation_inputs,
+    terminal_envelope,
+    validate_envelopes,
+)
+from norway_company_agent.enrichment import (
+    apply_strict_site_gate,
+    discover_website,
+    enrich_from_site,
+    gate_social_links,
+)
+from norway_company_agent.evidence import utc_now
+from norway_company_agent.identity import apply_website_identity_gate
+from norway_company_agent.official import fetch_official_modules
+from norway_company_agent.quality import apply_batch_consistency, redact_unpublished
+from norway_company_agent.synthesis import build_claims, build_summary
+from norway_company_agent.website import fetch_website
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -74,6 +85,9 @@ def main() -> None:
         if "website" in requested_modules:
             website_record, website_metrics = fetch_website(profile.get("website"))
             profile["evidence"]["website"] = apply_website_identity_gate(profile, website_record)["website"]
+            # Second gate: the site itself must tie it to this registry entry (org number, or legal
+            # name with the registry address; name-only is accepted for a registry-listed .no site).
+            profile["evidence"]["website"] = apply_strict_site_gate(profile, profile["evidence"]["website"], guessed=False)
             gated = profile["evidence"]["website"]
             gate_social_links(profile)
             if time.monotonic() > soft_deadline:
@@ -149,6 +163,19 @@ def main() -> None:
     ordered_profiles = [state[org] for org in orgs]
     # Cross-company check: a profile or site published for several companies is a group/chain page.
     batch_consistency = apply_batch_consistency(ordered_profiles)
+    # Rejected candidates stay as reasons only: a URL the run did not publish must not read as a claim.
+    website_methods: dict[str, int] = {}
+    discovery_results: dict[str, int] = {}
+    for profile in ordered_profiles:
+        assessment = (((profile.get("evidence") or {}).get("website") or {}).get("value") or {}).get("identity_assessment") or {}
+        key = f"{'published' if assessment.get('publishable') else 'withheld'}:{assessment.get('method') or 'no_site'}"
+        website_methods[key] = website_methods.get(key, 0) + 1
+        for attempt in (profile.get("enrichment_trace") or {}).get("website_discovery") or []:
+            result = "no_dns" if not attempt.get("dns") else str(attempt.get("result") or "unknown")
+            discovery_results[result] = discovery_results.get(result, 0) + 1
+        redact_unpublished(profile)
+    batch_consistency["website_decisions"] = dict(sorted(website_methods.items()))
+    batch_consistency["rejected_discovery_candidates"] = dict(sorted(discovery_results.items()))
     envelopes = []
     for profile in ordered_profiles:
         envelope = terminal_envelope(profile, run_id=args.run_id, modules=requested_modules, started_at=started_at, completed_at=completed_at)

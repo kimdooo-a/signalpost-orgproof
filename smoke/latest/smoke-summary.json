@@ -1,75 +1,87 @@
 {
-  "run_id": "smoke-20261101T234037Z",
+  "run_id": "smoke-20261113T215640Z",
   "envelopes": 100,
   "expected": 100,
   "validation_passed": true,
-  "minutes": 2.66,
-  "requests": 863,
+  "minutes": 2.8,
+  "requests": 824,
   "third_party_cost_usd": 0.0,
   "within_budget": true,
   "published": {
-    "websites": 4,
-    "social_profiles": 3,
-    "companies_with_news": 2,
-    "news_items": 24,
+    "websites": 7,
+    "social_profiles": 4,
+    "companies_with_news": 3,
+    "news_items": 29,
     "companies_with_jobs": 0,
     "job_items": 0
   },
   "withheld": {
     "website": {
-      "registry-linked URL lacks strong exact-entity identity evidence": 3,
-      "most legal-name tokens appear, but exact identity is incomplete": 1
+      "site prints a different organisation number as its own": 1,
+      "site does not carry the legal name or the organisation number": 1
     },
     "social": {},
     "news": {},
     "jobs": {}
   },
   "confidence": {
-    "high": 98,
-    "medium": 2
+    "high": 96,
+    "medium": 4
   },
   "claim_states": {
-    "available": 1674,
-    "not_available": 484,
-    "ambiguous": 4,
-    "blocked": 1
+    "available": 1688,
+    "not_available": 481,
+    "ambiguous": 2,
+    "blocked": 2
   },
   "non_available_claims_with_value": 0,
   "publication_gates": {
     "shared_social_urls": 0,
     "social_links_withheld": 0,
     "shared_websites": 0,
-    "websites_withheld": 0
+    "websites_withheld": 0,
+    "website_decisions": {
+      "published:name_and_registry_address_v1": 3,
+      "published:orgnr_on_site_v3": 2,
+      "published:registry_no_domain_name_v1": 2,
+      "withheld:name_missing_v1": 1,
+      "withheld:no_site": 91,
+      "withheld:other_orgnr_v1": 1
+    },
+    "rejected_discovery_candidates": {
+      "fetch_failed": 11,
+      "foreign_tld_v1": 10,
+      "guessed_name_only_v1": 10,
+      "name_missing_v1": 21,
+      "no_dns": 188,
+      "other_orgnr_v1": 1,
+      "parked_page_v1": 3,
+      "redirects_to_another_domain": 3,
+      "robots_disallow": 10
+    }
   },
-  "compared_with": "smoke/v3/envelopes.jsonl",
+  "compared_with": "out/smoke-before/envelopes.jsonl",
   "change": {
     "website": {
       "before": 4,
-      "after": 4,
-      "removed": 1,
-      "added": 1,
-      "removed_examples": [
-        "933787141 https://www.aiota.no/"
-      ]
+      "after": 7,
+      "removed": 0,
+      "added": 3,
+      "removed_examples": []
     },
     "social": {
       "before": 3,
-      "after": 3,
+      "after": 4,
       "removed": 0,
-      "added": 0,
+      "added": 1,
       "removed_examples": []
     },
     "news": {
       "before": 24,
-      "after": 24,
-      "removed": 4,
-      "added": 4,
-      "removed_examples": [
-        "827340162 https://novooi.com/showroom-kolleksjon/",
-        "827340162 https://novooi.com/spring-collection-2026/",
-        "827340162 https://novooi.com/studio-leie/",
-        "827340162 https://novooi.com/textiles-across-generations/"
-      ]
+      "after": 29,
+      "removed": 0,
+      "added": 5,
+      "removed_examples": []
     },
     "jobs": {
       "before": 0,
